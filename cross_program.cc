@@ -150,26 +150,46 @@ uint32_t CrossReadOrLose(int fd, int addr, const T &command) {
 	  (reply[3] << 0));
 }
 
-void CrossWriteBitstreamOrLose(int fd, int addr, const uint8_t *command, int size) {
-  uint8_t reply[4];
-  struct i2c_msg msgs[] = {
-    {
+void CrossSendBitstreamOrLose(int fd, int addr, const std::vector<std::uint8_t> &binary) {
+  std::vector<i2c_msg> msgs;
+  struct i2c_msg command_msg = {
       .addr = static_cast<__u16>(addr),
       .flags = 0,
-      .len = static_cast<short>(size),
-      .buf = reinterpret_cast<char *>(const_cast<uint8_t *>(command)),
-    },
-    {
+      .len = sizeof(kOpcodeLSC_BITSTREAM_BURST),
+      .buf = reinterpret_cast<char *>(const_cast<unsigned char *>(kOpcodeLSC_BITSTREAM_BURST)),
+  };
+  msgs.push_back(command_msg);
+
+  constexpr int chunk_size = 4096;
+  for (size_t i = 0; i < binary.size(); i+= chunk_size) {
+    int n_remaining = binary.size() - i;
+    int n_write = std::min(chunk_size, n_remaining);
+    struct i2c_msg bitstream_msg = {
       .addr = static_cast<__u16>(addr),
-      .flags = I2C_M_RD,
-      .len = sizeof(reply),
-      .buf = reinterpret_cast<char *>(reply),
-    },
-  };
+      .flags = I2C_M_NOSTART,
+      .len = static_cast<short>(n_write),
+      .buf = reinterpret_cast<char *>(const_cast<unsigned char *>(&(binary[i]))),
+    };
+    msgs.push_back(bitstream_msg);
+  }
   struct i2c_rdwr_ioctl_data ioctl_data = {
-    .msgs = msgs,
-    .nmsgs = 2
+    .msgs = &(msgs[0]),
+    .nmsgs = msgs.size()
   };
+
+#ifdef NOISY
+  int total = 0;
+  for (size_t i = 0; i < msgs.size(); ++i) {
+    std::cout << (boost::format("#%02d, addr=0x%02X, flags=0x%04X, len=0x%04X, buf=0x%016X")
+		  % i % msgs[i].addr % msgs[i].flags % msgs[i].len % reinterpret_cast<int>(&(msgs[i].buf[0])))
+	      << std::endl;
+    total += msgs[i].len;
+  }
+  std::cout << "binary size     = " << binary.size() << std::endl;
+  std::cout << "binary size + 4 = " << binary.size() + 4 << std::endl;
+  std::cout << "total mesg len  = " << total << std::endl;
+#endif
+
   int rc = ioctl(fd, I2C_RDWR, &ioctl_data);
   if (rc < 0) {
     Fail(EX_IOERR, (boost::format("failed to I2C_RDWR, rc=%1%, errno=%2%")
@@ -231,35 +251,11 @@ void CrossProgram(const int gpio_number, int i2c_fd, int i2c_address,
 
   // 6. Program SRAM.
   {
-  std::cout << "6. Program SRAM." << std::endl;
-  CrossComamndOrLose(i2c_fd, kOpcodeLSC_INIT_ADDRESS);
-#if 0
-  std::vector<std::uint8_t> sram_program(binary);
-  sram_program.insert(sram_program.begin(),
-    std::begin(kOpcodeLSC_BITSTREAM_BURST),
-    std::end(kOpcodeLSC_BITSTREAM_BURST));
-
-  // Without STOP ...  write bistream
-  WriteI2COrLose(i2c_fd, &sram_program[0], sram_program.size());
-#else
-  int n_remaining = binary.size();
-  auto it = binary.begin();
-  const int chunk_size = 1024;
-  while (n_remaining > 0) {
-    std::vector<std::uint8_t> chunk;
-    auto n_to_write = std::min(chunk_size, n_remaining);
-    chunk.insert(chunk.begin(),
-		 std::begin(kOpcodeLSC_BITSTREAM_BURST),
-		 std::end(kOpcodeLSC_BITSTREAM_BURST));
-    chunk.insert(chunk.end(), it, it + n_to_write);
-    WriteI2COrLose(i2c_fd, &chunk[0], chunk.size());
-    n_remaining -= n_to_write;
-    it += n_to_write;
-  }    
-#endif
-  usleep(kProgramSRAMDelayMicroseconds);
-
-}
+    std::cout << "6. Program SRAM." << std::endl;
+    CrossComamndOrLose(i2c_fd, kOpcodeLSC_INIT_ADDRESS);
+    CrossSendBitstreamOrLose(i2c_fd, i2c_address, binary);
+    usleep(kProgramSRAMDelayMicroseconds);
+  }
 
   // 7. Verify USERCODE.
   {
@@ -340,8 +336,8 @@ int main(int argc, char **argv) {
     Fail(EX_IOERR, "failed to set I2C address");
   }
 
-  if (ioctl(i2c_fd, I2C_TIMEOUT, 500 /* tens of ms */) < 0) {
-    Fail(EX_IOERR, "failed to set I2C address");
+  if (ioctl(i2c_fd, I2C_TIMEOUT, 10 * 100 /* tens of ms */) < 0) {
+    Fail(EX_IOERR, "failed to set I2C timeout");
   }
 
   CrossProgram(gpio_number, i2c_fd, i2c_address, binary);
