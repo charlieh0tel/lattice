@@ -31,6 +31,7 @@ constexpr uint32_t kStatusDoneFlag = (1<<8);
 constexpr uint32_t kStatusBusyFlag = (1<<12);
 constexpr uint32_t kStatusFailFlag = (1<<13);
 
+#define NELEMENTS(A) (sizeof(A)/sizeof(A[0]))
 
 std::string argv0;
 
@@ -83,26 +84,10 @@ std::vector<std::uint8_t> ReadFileOrLose(const std::string &path) {
   return bytes;
 }
 
-#if 0
-void GpioSet(const std::string &path, int value) {
-  std::cout << "setting " << path << " to " << value << std::endl;
-  int gpio_fd = open(path.c_str(), O_RDWR);
-  if (gpio_fd < 0) {
-    Fail(EX_NOINPUT,
-         (boost::format("failed to open gpio device %1%") % path).str());
-  }
-  char c[2];
-  c[0] = (value ? '1' : '0');
-  c[1] = '\n';
-  WriteOrLose(gpio_fd, c, sizeof(c));
-  (void) close(gpio_fd);
-}
-#endif
-
 void WriteI2COrLose(int fd, const void *buf, ssize_t count) {
 #ifdef NOISY
   std::cout << "W:";
-  constexpr int max_noise = 16;
+  constexpr int max_noise = 32;
   int brief_count = std::min(count, max_noise);
   for (int i = 0; i < brief_count; ++i) {
     std::cout << boost::format(" %02X") % static_cast<int>(static_cast<const uint8_t *>(buf)[i]);
@@ -128,45 +113,109 @@ uint32_t ReadI2CBigEndian32BitsOrLose(int fd) {
 	  (bytes[3] << 0));
 }
 
-void CrossProgram(const int gpio_number, int i2c_fd,
+template <typename T>
+void CrossComamndOrLose(int fd, const T &command) {
+  WriteI2COrLose(fd, command, sizeof(command));
+}
+
+template <typename T>
+uint32_t CrossReadOrLose(int fd, int addr, const T &command) {
+  uint8_t reply[4];
+  struct i2c_msg msgs[] = {
+    {
+      .addr = static_cast<__u16>(addr),
+      .flags = 0,
+      .len = sizeof(command),
+      .buf = reinterpret_cast<char *>(const_cast<unsigned char *>(command)),
+    },
+    {
+      .addr = static_cast<__u16>(addr),
+      .flags = I2C_M_RD,
+      .len = sizeof(reply),
+      .buf = reinterpret_cast<char *>(reply),
+    },
+  };
+  struct i2c_rdwr_ioctl_data ioctl_data = {
+    .msgs = msgs,
+    .nmsgs = 2
+  };
+  int rc = ioctl(fd, I2C_RDWR, &ioctl_data);
+  if (rc < 0) {
+    Fail(EX_IOERR, (boost::format("failed to I2C_RDWR, rc=%1%, errno=%2%")
+		    % rc % errno).str());
+  }
+  return ((reply[0] << 24) |
+	  (reply[1] << 16) |
+	  (reply[2] << 8) |
+	  (reply[3] << 0));
+}
+
+void CrossWriteBitstreamOrLose(int fd, int addr, const uint8_t *command, int size) {
+  uint8_t reply[4];
+  struct i2c_msg msgs[] = {
+    {
+      .addr = static_cast<__u16>(addr),
+      .flags = 0,
+      .len = static_cast<short>(size),
+      .buf = reinterpret_cast<char *>(const_cast<uint8_t *>(command)),
+    },
+    {
+      .addr = static_cast<__u16>(addr),
+      .flags = I2C_M_RD,
+      .len = sizeof(reply),
+      .buf = reinterpret_cast<char *>(reply),
+    },
+  };
+  struct i2c_rdwr_ioctl_data ioctl_data = {
+    .msgs = msgs,
+    .nmsgs = 2
+  };
+  int rc = ioctl(fd, I2C_RDWR, &ioctl_data);
+  if (rc < 0) {
+    Fail(EX_IOERR, (boost::format("failed to I2C_RDWR, rc=%1%, errno=%2%")
+		    % rc % errno).str());
+  }
+}
+
+
+void CrossProgram(const int gpio_number, int i2c_fd, int i2c_address,
 		  const std::vector<std::uint8_t> &binary) {
   // 1. Initialize.
   {
     std::cout << "1. Initialize" << std::endl;
+    std::cout << "CRESETB <- 0" << std::endl;
     digitalWrite(gpio_number, 0);
-    WriteI2COrLose(i2c_fd,
-		   kCrosslinkActivationKey, sizeof(kCrosslinkActivationKey));
+    CrossComamndOrLose(i2c_fd, kCrosslinkActivationKey);
     digitalWrite(gpio_number, 1);
+    std::cout << "CRESETB <- 1" << std::endl;
     usleep(kCResetBHighDelayMicroseconds);
   }
 
   // 2. Check IDCODE.
   {
     std::cout << "2. Check IDCODE." << std::endl;
-    WriteI2COrLose(i2c_fd, kOpcodeIDCODE, sizeof(kOpcodeIDCODE));
-    const uint32_t id_code = ReadI2CBigEndian32BitsOrLose(i2c_fd);
+    const uint32_t id_code = CrossReadOrLose(i2c_fd, i2c_address, kOpcodeIDCODE);
     std::cout << (boost::format("idcode = 0x%08X") % id_code) << std::endl;
   }
 
   // 3. Enable SRAM Programming Mode
   {
     std::cout << "3. Enable SRAM Programming Mode." << std::endl;
-    WriteI2COrLose(i2c_fd, kOpcodeENABLE_SRAM_PROGRAM, sizeof(kOpcodeENABLE_SRAM_PROGRAM));
+    CrossComamndOrLose(i2c_fd, kOpcodeENABLE_SRAM_PROGRAM);
     usleep(kEnableSRAMProgramDelayMicroseconds);
   }
 
   // 4. Erase SRAM
   {
     std::cout << "4. Erase SRAM." << std::endl;
-    WriteI2COrLose(i2c_fd, kOpcodeERASE_SRAM, sizeof(kOpcodeERASE_SRAM));
+    CrossComamndOrLose(i2c_fd, kOpcodeERASE_SRAM);
     usleep(kEraseSRAMDelayMicroseconds);
   }
 
   // 5. Read Status Register
   {
     std::cout << "5. Read Status Register." << std::endl;
-    WriteI2COrLose(i2c_fd, kOpcodeREAD_STATUS, sizeof(kOpcodeREAD_STATUS));
-    const uint32_t status = ReadI2CBigEndian32BitsOrLose(i2c_fd);
+    const uint32_t status = CrossReadOrLose(i2c_fd, i2c_address, kOpcodeREAD_STATUS);
     std::cout << (boost::format("status = 0x%08X") % status) << std::endl;
     const bool busy = status & kStatusBusyFlag;
     const bool fail = status & kStatusFailFlag;
@@ -183,8 +232,7 @@ void CrossProgram(const int gpio_number, int i2c_fd,
   // 6. Program SRAM.
   {
   std::cout << "6. Program SRAM." << std::endl;
-  WriteI2COrLose(i2c_fd, kOpcodeLSC_INIT_ADDRESS, sizeof(kOpcodeLSC_INIT_ADDRESS));
-
+  CrossComamndOrLose(i2c_fd, kOpcodeLSC_INIT_ADDRESS);
 #if 0
   std::vector<std::uint8_t> sram_program(binary);
   sram_program.insert(sram_program.begin(),
@@ -216,16 +264,14 @@ void CrossProgram(const int gpio_number, int i2c_fd,
   // 7. Verify USERCODE.
   {
     std::cout << "7. Verify USERCODE." << std::endl;
-    WriteI2COrLose(i2c_fd, kOpcodeLSC_READ_USER_CODE, sizeof(kOpcodeLSC_READ_USER_CODE));
-    const uint32_t user_code = ReadI2CBigEndian32BitsOrLose(i2c_fd);
+    const uint32_t user_code = CrossReadOrLose(i2c_fd, i2c_address, kOpcodeLSC_READ_USER_CODE);
     std::cout << (boost::format("user_code = 0x%08X") % user_code) << std::endl;
   }
   
   // 8. Read Status Register.
   {
     std::cout << "5. Read Status Register." << std::endl;
-    WriteI2COrLose(i2c_fd, kOpcodeREAD_STATUS, sizeof(kOpcodeREAD_STATUS));
-    const uint32_t status = ReadI2CBigEndian32BitsOrLose(i2c_fd);
+    const uint32_t status = CrossReadOrLose(i2c_fd, i2c_address, kOpcodeREAD_STATUS);
     std::cout << (boost::format("status = 0x%08X") % status) << std::endl;
     const bool busy = status & kStatusBusyFlag;
     const bool fail = status & kStatusFailFlag;
@@ -247,7 +293,7 @@ void CrossProgram(const int gpio_number, int i2c_fd,
   // 9. Exit Programming Mode.
   {
     std::cout << "9. Exit Programming Mode." << std::endl;
-    WriteI2COrLose(i2c_fd, kOpcodeDISABLE, sizeof(kOpcodeDISABLE));
+    CrossComamndOrLose(i2c_fd, kOpcodeDISABLE);
   }
 }
 
@@ -298,7 +344,7 @@ int main(int argc, char **argv) {
     Fail(EX_IOERR, "failed to set I2C address");
   }
 
-  CrossProgram(gpio_number, i2c_fd, binary);
+  CrossProgram(gpio_number, i2c_fd, i2c_address, binary);
 
   if (close(i2c_fd) < 0) {
     Fail(EX_IOERR, "failed to close I2C device");
