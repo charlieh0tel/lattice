@@ -141,8 +141,12 @@ uint32_t CrossReadOrLose(int fd, int addr, const T &command) {
   };
   int rc = ioctl(fd, I2C_RDWR, &ioctl_data);
   if (rc < 0) {
-    Fail(EX_IOERR, (boost::format("failed to I2C_RDWR, rc=%1%, errno=%2%")
+    Fail(EX_IOERR, (boost::format("failed with error on ioctl I2C_RDWR, rc=%1%, errno=%2%")
 		    % rc % errno).str());
+  }
+  if (rc != static_cast<int>(ioctl_data.nmsgs)) {
+    Fail(EX_IOERR, (boost::format("failed to transfer all messages, rc=%1%") 
+		    % rc).str());
   }
   return ((reply[0] << 24) |
 	  (reply[1] << 16) |
@@ -192,8 +196,12 @@ void CrossSendBitstreamOrLose(int fd, int addr, const std::vector<std::uint8_t> 
 
   int rc = ioctl(fd, I2C_RDWR, &ioctl_data);
   if (rc < 0) {
-    Fail(EX_IOERR, (boost::format("failed to I2C_RDWR, rc=%1%, errno=%2%")
+    Fail(EX_IOERR, (boost::format("failed with error on ioctl I2C_RDWR, rc=%1%, errno=%2%")
 		    % rc % errno).str());
+  }
+  if (rc != static_cast<int>(ioctl_data.nmsgs)) {
+    Fail(EX_IOERR, (boost::format("failed to transfer all messages, rc=%1%") 
+		    % rc).str());
   }
 }
 
@@ -336,7 +344,7 @@ int main(int argc, char **argv) {
     Fail(EX_IOERR, "failed to set I2C address");
   }
 
-  if (ioctl(i2c_fd, I2C_TIMEOUT, 10 * 100 /* tens of ms */) < 0) {
+  if (ioctl(i2c_fd, I2C_TIMEOUT, 60 * 100 /* tens of ms */) < 0) {
     Fail(EX_IOERR, "failed to set I2C timeout");
   }
 
