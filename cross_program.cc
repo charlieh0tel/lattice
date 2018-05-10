@@ -23,8 +23,8 @@
 #include "io.h"
 
 #ifdef NEED_I2C_H
-typedef __u8_t i2c_buf_t;
-typedef __u16_t i2c_len_t;
+typedef __u8 i2c_buf_t;
+typedef __u16 i2c_len_t;
 #else
 typedef char i2c_buf_t;
 typedef short i2c_len_t;
