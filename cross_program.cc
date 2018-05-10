@@ -1,7 +1,9 @@
 #include <fcntl.h>
 #include <linux/i2c-dev.h>
 #include <sysexits.h>
+#if WIRING_PI
 #include <wiringPi.h>
+#endif
 #include <boost/format.hpp>
 #include <chrono>
 #include <cinttypes>
@@ -181,7 +183,20 @@ void SetCRESETBOutput(const int gpio_number, int value) {
 #ifdef NOISY
   std::cout << "CRESETB <- " << value << std::endl;
 #endif
+#if WIRING_PI
   digitalWrite(gpio_number, value);
+#else
+  {
+    auto path = (boost::format("/sys/class/gpio/gpio%d/value") %  gpio_number).str();
+    int fd = open(path.c_str(), O_RDWR);
+    if (fd < 0) {
+      Fail(EX_NOINPUT, (boost::format("failed to open %1%") % path).str());
+    }
+    char ascii_value = (value ? '1' : '0');
+    WriteOrLose(fd, &ascii_value, 1);
+    (void) close(fd);
+  }
+#endif
 }
 
 void CrosslinkProgram(const int cresetb_gpio_num, int i2c_fd, int i2c_address,
@@ -308,11 +323,13 @@ int main(int argc, char **argv) {
 
   const auto &binary = ReadFileOrLose(binary_path);
 
+#if WIRING_PI
   // Setup our CRESETB GPIO.
   if (wiringPiSetup() == -1) {
     Fail(EX_IOERR, "Failed to initialize wiringPi");
   }
   pinMode(cresetb_gpio_num, OUTPUT);
+#endif
 
   int i2c_fd = open(i2c_path.c_str(), O_RDWR);
   if (i2c_fd < 0) {
