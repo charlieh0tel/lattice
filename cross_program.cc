@@ -1,7 +1,7 @@
 #include <fcntl.h>
 #include <linux/i2c-dev.h>
 #ifdef NEED_I2C_H
-#incldue <linux/i2c.h>
+#include <linux/i2c.h>
 #endif
 #include <sys/ioctl.h>
 #include <sysexits.h>
