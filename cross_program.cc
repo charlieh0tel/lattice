@@ -187,8 +187,8 @@ void SetCRESETBOutput(const int gpio_number, int value) {
 void CrosslinkProgram(const int cresetb_gpio_num, int i2c_fd, int i2c_address,
                       const std::vector<std::uint8_t> &binary) {
   // 1. Initialize.
+  std::cout << "1. Initialize" << std::endl;
   {
-    std::cout << "1. Initialize" << std::endl;
     SetCRESETBOutput(cresetb_gpio_num, 0);
     std::this_thread::sleep_for(kCResetBLowDelay);
     CrosslinkComamndOrLose(i2c_fd, kCrosslinkActivationKey);
@@ -197,23 +197,23 @@ void CrosslinkProgram(const int cresetb_gpio_num, int i2c_fd, int i2c_address,
   }
 
   // 2. Check IDCODE.
+  std::cout << "2. Check IDCODE." << std::endl;
   {
-    std::cout << "2. Check IDCODE." << std::endl;
     const uint32_t id_code =
         CrosslinkReadOrLose(i2c_fd, i2c_address, kOpcodeIDCODE);
     std::cout << (boost::format("IDCODE = 0x%08X") % id_code) << std::endl;
   }
 
   // 3. Enable SRAM Programming Mode
+  std::cout << "3. Enable SRAM Programming Mode." << std::endl;
   {
-    std::cout << "3. Enable SRAM Programming Mode." << std::endl;
     CrosslinkComamndOrLose(i2c_fd, kOpcodeENABLE);
     std::this_thread::sleep_for(kEnableDelay);
   }
 
   // 4. Erase SRAM
+  std::cout << "4. Erase SRAM." << std::endl;
   {
-    std::cout << "4. Erase SRAM." << std::endl;
     CrosslinkComamndOrLose(i2c_fd, kOpcodeERASE);
     // Lattice now says this delay is not required, but sometimes we
     // see BUSY in the status register without it.  Could poll the
@@ -222,8 +222,8 @@ void CrosslinkProgram(const int cresetb_gpio_num, int i2c_fd, int i2c_address,
   }
 
   // 5. Read Status Register
+  std::cout << "5. Read Status Register." << std::endl;
   {
-    std::cout << "5. Read Status Register." << std::endl;
     const uint32_t status =
         CrosslinkReadOrLose(i2c_fd, i2c_address, kOpcodeREAD_STATUS);
     const bool busy = status & kREAD_STATUSBusyFlag;
@@ -242,23 +242,23 @@ void CrosslinkProgram(const int cresetb_gpio_num, int i2c_fd, int i2c_address,
   }
 
   // 6. Program SRAM.
+  std::cout << "6. Program SRAM." << std::endl;
   {
-    std::cout << "6. Program SRAM." << std::endl;
     CrosslinkComamndOrLose(i2c_fd, kOpcodeLSC_INIT_ADDRESS);
     CrosslinkSendBitstreamOrLose(i2c_fd, i2c_address, binary);
   }
 
   // 7. Verify USERCODE.
+  std::cout << "7. Verify USERCODE." << std::endl;
   {
-    std::cout << "7. Verify USERCODE." << std::endl;
     const uint32_t user_code =
         CrosslinkReadOrLose(i2c_fd, i2c_address, kOpcodeREAD_USER_CODE);
     std::cout << (boost::format("user_code = 0x%08X") % user_code) << std::endl;
   }
 
   // 8. Read Status Register.
+  std::cout << "5. Read Status Register." << std::endl;
   {
-    std::cout << "5. Read Status Register." << std::endl;
     const uint32_t status =
         CrosslinkReadOrLose(i2c_fd, i2c_address, kOpcodeREAD_STATUS);
     const bool busy = status & kREAD_STATUSBusyFlag;
@@ -283,8 +283,8 @@ void CrosslinkProgram(const int cresetb_gpio_num, int i2c_fd, int i2c_address,
   }
 
   // 9. Exit Programming Mode.
+  std::cout << "9. Exit Programming Mode." << std::endl;
   {
-    std::cout << "9. Exit Programming Mode." << std::endl;
     CrosslinkComamndOrLose(i2c_fd, kOpcodeDISABLE);
   }
 }
