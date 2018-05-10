@@ -1,7 +1,7 @@
 #include <fcntl.h>
 #include <linux/i2c-dev.h>
 #include <sysexits.h>
-#if WIRING_PI
+#ifdef WIRING_PI
 #include <wiringPi.h>
 #endif
 #include <boost/format.hpp>
@@ -183,7 +183,7 @@ void SetCRESETBOutput(const int gpio_number, int value) {
 #ifdef NOISY
   std::cout << "CRESETB <- " << value << std::endl;
 #endif
-#if WIRING_PI
+#ifdef WIRING_PI
   digitalWrite(gpio_number, value);
 #else
   {
@@ -322,7 +322,7 @@ int main(int argc, char **argv) {
 
   const auto &binary = ReadFileOrLose(binary_path);
 
-#if WIRING_PI
+#ifdef WIRING_PI
   // Setup our CRESETB GPIO.
   if (wiringPiSetup() == -1) {
     Fail(EX_IOERR, "Failed to initialize wiringPi");
