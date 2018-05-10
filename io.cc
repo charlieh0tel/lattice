@@ -22,7 +22,7 @@ void ReadOrLose(int fd, void *buf, ssize_t count) {
   ssize_t rc = read(fd, buf, count);
   if (rc != count) {
     std::ostringstream out;
-    out << "failed to read bytes, rc=" << rc << ", errno=" << errno << "("
+    out << "failed to read bytes, rc=" << rc << ", errno=" << errno << " ("
         << std::strerror(errno) << ")";
     Fail(EX_IOERR, out.str());
   }
@@ -32,7 +32,7 @@ void WriteOrLose(int fd, const void *buf, ssize_t count) {
   ssize_t rc = write(fd, buf, count);
   if (rc != count) {
     std::ostringstream out;
-    out << "failed to write bytes, rc=" << rc << ", errno=" << errno << "("
+    out << "failed to write bytes, rc=" << rc << ", errno=" << errno << " ("
         << std::strerror(errno) << ")";
     Fail(EX_IOERR, out.str());
   }

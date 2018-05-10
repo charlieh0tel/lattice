@@ -1,6 +1,5 @@
 #include <fcntl.h>
 #include <linux/i2c-dev.h>
-#include <linux/i2c.h>
 #include <sys/ioctl.h>
 #include <sysexits.h>
 #include <unistd.h>
@@ -95,13 +94,13 @@ uint32_t CrosslinkReadOrLose(const int fd, const int i2c_address,
           .addr = static_cast<__u16>(i2c_address),
           .flags = 0,
           .len = sizeof(command),
-          .buf = reinterpret_cast<__u8 *>(const_cast<unsigned char *>(command)),
+          .buf = reinterpret_cast<char *>(const_cast<unsigned char *>(command)),
       },
       {
           .addr = static_cast<__u16>(i2c_address),
           .flags = I2C_M_RD,
           .len = sizeof(reply),
-          .buf = reinterpret_cast<__u8 *>(reply),
+          .buf = reinterpret_cast<char *>(reply),
       },
   };
   struct i2c_rdwr_ioctl_data ioctl_data = {.msgs = msgs, .nmsgs = 2};
@@ -112,7 +111,7 @@ uint32_t CrosslinkReadOrLose(const int fd, const int i2c_address,
   if (rc < 0) {
     std::ostringstream out;
     out << "failed with error on ioctl I2C_RDWR, rc=" << rc
-        << ", errno=" << errno << "(" << std::strerror(errno) << ")";
+        << ", errno=" << errno << " (" << std::strerror(errno) << ")";
     Fail(EX_IOERR, out.str());
   }
   if (rc != static_cast<int>(ioctl_data.nmsgs)) {
@@ -134,7 +133,7 @@ void CrosslinkSendBitstreamOrLose(const int fd, const int i2c_address,
       .addr = static_cast<__u16>(i2c_address),
       .flags = 0,
       .len = sizeof(kOpcodeLSC_BITSTREAM_BURST),
-      .buf = reinterpret_cast<__u8 *>(
+      .buf = reinterpret_cast<char *>(
           const_cast<unsigned char *>(kOpcodeLSC_BITSTREAM_BURST)),
   };
   msgs.push_back(command_msg);
@@ -145,9 +144,9 @@ void CrosslinkSendBitstreamOrLose(const int fd, const int i2c_address,
     struct i2c_msg bitstream_msg = {
         .addr = static_cast<__u16>(i2c_address),
         .flags = I2C_M_NOSTART,
-        .len = static_cast<__u16>(n_write),
+        .len = static_cast<short>(n_write),
         .buf =
-            reinterpret_cast<__u8 *>(const_cast<unsigned char *>(&(binary[i]))),
+            reinterpret_cast<char *>(const_cast<unsigned char *>(&(binary[i]))),
     };
     msgs.push_back(bitstream_msg);
   }
@@ -169,7 +168,7 @@ void CrosslinkSendBitstreamOrLose(const int fd, const int i2c_address,
   if (rc < 0) {
     std::ostringstream out;
     out << "failed with error on ioctl I2C_RDWR, rc=" << rc
-        << ", errno=" << errno << "(" << std::strerror(errno) << ")";
+        << ", errno=" << errno << " (" << std::strerror(errno) << ")";
     Fail(EX_IOERR, out.str());
   }
   if (rc != static_cast<int>(ioctl_data.nmsgs)) {
