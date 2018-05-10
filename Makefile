@@ -1,7 +1,8 @@
 CXXFLAGS=-std=c++14 -Wall
 CXXFLAGS+=-g
 CXXFLAGS+=-DNOISY
-LDLIBS=-lwiringPi
+#CXXFLAGS+=-DWIRING_PI
+#LDLIBS=-lwiringPi
 
 cross_program: cross_program.cc io.cc
 

@@ -14,14 +14,14 @@
 #include <vector>
 #include "io.h"
 
-// This limit is baked into the kernel, but (sigh) not exposed in any
-// header.
+// This limit is baked into the kernel, but (sigh) is not exposed in
+// any header.
 const int kLinuxMaxI2CMessageSize = 8192;
 
-// Lattic activation key to enable programming mode.
+// Lattice activation key to enable programming mode.
 constexpr uint8_t kCrosslinkActivationKey[] = {0xa4, 0xc6, 0xf4, 0x8a};
 
-// Lattice Opcodes.
+// Lattice opcodes.
 constexpr uint8_t kOpcodeIDCODE[] = {0xe0, 0x00, 0x00, 0x00};
 constexpr uint8_t kOpcodeENABLE[] = {0xc6, 0x00, 0x00, 0x00};
 constexpr uint8_t kOpcodeERASE[] = {0x0e, 0x00, 0x00, 0x00};
@@ -31,7 +31,7 @@ constexpr uint8_t kOpcodeLSC_BITSTREAM_BURST[] = {0x7a, 0x00, 0x00, 0x00};
 constexpr uint8_t kOpcodeREAD_USER_CODE[] = {0xc0, 0x00, 0x00, 0x00};
 constexpr uint8_t kOpcodeDISABLE[] = {0x26, 0x00, 0x00, 0x00};
 
-// Delays between operations.
+// Required delays between operations.
 constexpr auto kCResetBLowDelay = std::chrono::milliseconds(
     1000);  // Lattice now says 0 (was 1000 ms in previous doc).
 constexpr auto kCResetBHighDelay = std::chrono::milliseconds(10);
@@ -152,7 +152,7 @@ void CrosslinkSendBitstreamOrLose(const int fd, const int i2c_address,
     msgs.push_back(bitstream_msg);
   }
   struct i2c_rdwr_ioctl_data ioctl_data = {.msgs = &(msgs[0]),
-                                           .nmsgs = msgs.size()};
+                                           .nmsgs = static_cast<__u32>(msgs.size())};
 
 #ifdef NOISY
   for (size_t i = 0; i < msgs.size(); ++i) {
@@ -160,7 +160,7 @@ void CrosslinkSendBitstreamOrLose(const int fd, const int i2c_address,
         << (boost::format(
                 "#%02d, addr=0x%02X, flags=0x%04X, len=0x%04X, buf=0x%016X") %
             i % msgs[i].addr % msgs[i].flags % msgs[i].len %
-            reinterpret_cast<int>(&(msgs[i].buf[0])))
+            reinterpret_cast<ptrdiff_t>(&(msgs[i].buf[0])))
         << " " << DumpBuffer(msgs[i].buf, msgs[i].len, 16) << std::endl;
   }
 #endif
