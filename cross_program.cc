@@ -3,13 +3,13 @@
 #include <sysexits.h>
 #include <wiringPi.h>
 #include <boost/format.hpp>
+#include <chrono>
 #include <cinttypes>
 #include <iostream>
 #include <sstream>
 #include <string>
-#include <vector>
 #include <thread>
-#include <chrono>
+#include <vector>
 #include "io.h"
 
 // This limit is baked into the kernel, but (sigh) not exposed in any
@@ -30,10 +30,12 @@ constexpr uint8_t kOpcodeREAD_USER_CODE[] = {0xc0, 0x00, 0x00, 0x00};
 constexpr uint8_t kOpcodeDISABLE[] = {0x26, 0x00, 0x00, 0x00};
 
 // Delays between operations.
-constexpr auto kCResetBLowDelay = std::chrono::milliseconds(1000); // Lattice now says 0 (was 1000 ms in previous doc).
+constexpr auto kCResetBLowDelay = std::chrono::milliseconds(
+    1000);  // Lattice now says 0 (was 1000 ms in previous doc).
 constexpr auto kCResetBHighDelay = std::chrono::milliseconds(10);
 constexpr auto kEnableDelay = std::chrono::milliseconds(1);
-constexpr auto kEraseDelay = std::chrono::milliseconds(100);  // Lattice says 0 (was 5000 ms in previous doc)
+constexpr auto kEraseDelay = std::chrono::milliseconds(
+    100);  // Lattice says 0 (was 5000 ms in previous doc)
 
 // Flags in READ_STATUS value.
 constexpr uint32_t kREAD_STATUSDoneFlag = (1 << 8);
@@ -84,7 +86,7 @@ void CrosslinkComamndOrLose(const int fd, const T &command) {
 
 template <typename T>
 uint32_t CrosslinkReadOrLose(const int fd, const int i2c_address,
-                         const T &command) {
+                             const T &command) {
   uint8_t reply[4];
   struct i2c_msg msgs[] = {
       {
@@ -124,7 +126,7 @@ uint32_t CrosslinkReadOrLose(const int fd, const int i2c_address,
 }
 
 void CrosslinkSendBitstreamOrLose(const int fd, const int i2c_address,
-                              const std::vector<std::uint8_t> &binary) {
+                                  const std::vector<std::uint8_t> &binary) {
   std::vector<i2c_msg> msgs;
   struct i2c_msg command_msg = {
       .addr = static_cast<__u16>(i2c_address),
@@ -183,7 +185,7 @@ void SetCRESETBOutput(const int gpio_number, int value) {
 }
 
 void CrosslinkProgram(const int cresetb_gpio_num, int i2c_fd, int i2c_address,
-                  const std::vector<std::uint8_t> &binary) {
+                      const std::vector<std::uint8_t> &binary) {
   // 1. Initialize.
   {
     std::cout << "1. Initialize" << std::endl;

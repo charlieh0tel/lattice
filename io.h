@@ -10,5 +10,4 @@ void ReadOrLose(int fd, void *buf, ssize_t count);
 void WriteOrLose(int fd, const void *buf, ssize_t count);
 std::vector<std::uint8_t> ReadFileOrLose(const std::string &path);
 
-
 #endif

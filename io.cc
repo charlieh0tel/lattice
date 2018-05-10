@@ -54,4 +54,3 @@ std::vector<std::uint8_t> ReadFileOrLose(const std::string &path) {
 
   return bytes;
 }
-
