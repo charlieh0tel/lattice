@@ -147,8 +147,8 @@ void CrosslinkSendBitstreamOrLose(const int fd, const int i2c_address,
     };
     msgs.push_back(bitstream_msg);
   }
-  struct i2c_rdwr_ioctl_data ioctl_data = {.msgs = &(msgs[0]),
-                                           .nmsgs = static_cast<__u32>(msgs.size())};
+  struct i2c_rdwr_ioctl_data ioctl_data = {
+      .msgs = &(msgs[0]), .nmsgs = static_cast<__u32>(msgs.size())};
 
 #ifdef NOISY
   for (size_t i = 0; i < msgs.size(); ++i) {
