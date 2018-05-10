@@ -1,5 +1,8 @@
 #include <fcntl.h>
 #include <linux/i2c-dev.h>
+#ifdef NEED_I2C_H
+#incldue <linux/i2c.h>
+#endif
 #include <sys/ioctl.h>
 #include <sysexits.h>
 #include <unistd.h>
@@ -18,6 +21,15 @@
 #include <thread>
 #include <vector>
 #include "io.h"
+
+#ifdef NEED_I2C_H
+typedef __u8_t i2c_buf_t;
+typedef __u16_t i2c_len_t;
+#else
+typedef char i2c_buf_t;
+typedef short i2c_len_t;
+#endif
+
 
 // This limit is baked into the kernel, but (sigh) is not exposed in
 // any header.
@@ -94,13 +106,13 @@ uint32_t CrosslinkReadOrLose(const int fd, const int i2c_address,
           .addr = static_cast<__u16>(i2c_address),
           .flags = 0,
           .len = sizeof(command),
-          .buf = reinterpret_cast<char *>(const_cast<unsigned char *>(command)),
+          .buf = reinterpret_cast<i2c_buf_t *>(const_cast<unsigned char *>(command)),
       },
       {
           .addr = static_cast<__u16>(i2c_address),
           .flags = I2C_M_RD,
           .len = sizeof(reply),
-          .buf = reinterpret_cast<char *>(reply),
+          .buf = reinterpret_cast<i2c_buf_t *>(reply),
       },
   };
   struct i2c_rdwr_ioctl_data ioctl_data = {.msgs = msgs, .nmsgs = 2};
@@ -133,7 +145,7 @@ void CrosslinkSendBitstreamOrLose(const int fd, const int i2c_address,
       .addr = static_cast<__u16>(i2c_address),
       .flags = 0,
       .len = sizeof(kOpcodeLSC_BITSTREAM_BURST),
-      .buf = reinterpret_cast<char *>(
+      .buf = reinterpret_cast<i2c_buf_t *>(
           const_cast<unsigned char *>(kOpcodeLSC_BITSTREAM_BURST)),
   };
   msgs.push_back(command_msg);
@@ -144,9 +156,9 @@ void CrosslinkSendBitstreamOrLose(const int fd, const int i2c_address,
     struct i2c_msg bitstream_msg = {
         .addr = static_cast<__u16>(i2c_address),
         .flags = I2C_M_NOSTART,
-        .len = static_cast<short>(n_write),
+        .len = static_cast<i2c_len_t>(n_write),
         .buf =
-            reinterpret_cast<char *>(const_cast<unsigned char *>(&(binary[i]))),
+            reinterpret_cast<i2c_buf_t *>(const_cast<unsigned char *>(&(binary[i]))),
     };
     msgs.push_back(bitstream_msg);
   }
