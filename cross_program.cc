@@ -32,9 +32,9 @@ constexpr uint8_t kOpcodeREAD_USER_CODE[] = {0xc0, 0x00, 0x00, 0x00};
 constexpr uint8_t kOpcodeDISABLE[] = {0x26, 0x00, 0x00, 0x00};
 
 // Required delays between operations.
-constexpr auto kCResetBLowDelay = std::chrono::milliseconds(
+constexpr auto kCRESETBLowDelay = std::chrono::milliseconds(
     1000);  // Lattice now says 0 (was 1000 ms in previous doc).
-constexpr auto kCResetBHighDelay = std::chrono::milliseconds(10);
+constexpr auto kCRESETBHighDelay = std::chrono::milliseconds(10);
 constexpr auto kEnableDelay = std::chrono::milliseconds(1);
 constexpr auto kEraseDelay = std::chrono::milliseconds(
     100);  // Lattice says 0 (was 5000 ms in previous doc)
@@ -206,10 +206,10 @@ void CrosslinkProgram(const int cresetb_gpio_num, int i2c_fd, int i2c_address,
   std::cout << "1. Initialize" << std::endl;
   {
     SetCRESETBOutput(cresetb_gpio_num, 0);
-    std::this_thread::sleep_for(kCResetBLowDelay);
+    std::this_thread::sleep_for(kCRESETBLowDelay);
     CrosslinkComamndOrLose(i2c_fd, kCrosslinkActivationKey);
     SetCRESETBOutput(cresetb_gpio_num, 1);
-    std::this_thread::sleep_for(kCResetBHighDelay);
+    std::this_thread::sleep_for(kCRESETBHighDelay);
   }
 
   // 2. Check IDCODE.
