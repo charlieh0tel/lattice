@@ -30,7 +30,6 @@ typedef char i2c_buf_t;
 typedef short i2c_len_t;
 #endif
 
-
 // This limit is baked into the kernel, but (sigh) is not exposed in
 // any header.
 const int kLinuxMaxI2CMessageSize = 8192;
@@ -106,7 +105,8 @@ uint32_t CrosslinkReadOrLose(const int fd, const int i2c_address,
           .addr = static_cast<__u16>(i2c_address),
           .flags = 0,
           .len = sizeof(command),
-          .buf = reinterpret_cast<i2c_buf_t *>(const_cast<unsigned char *>(command)),
+          .buf = reinterpret_cast<i2c_buf_t *>(
+              const_cast<unsigned char *>(command)),
       },
       {
           .addr = static_cast<__u16>(i2c_address),
@@ -157,8 +157,8 @@ void CrosslinkSendBitstreamOrLose(const int fd, const int i2c_address,
         .addr = static_cast<__u16>(i2c_address),
         .flags = I2C_M_NOSTART,
         .len = static_cast<i2c_len_t>(n_write),
-        .buf =
-            reinterpret_cast<i2c_buf_t *>(const_cast<unsigned char *>(&(binary[i]))),
+        .buf = reinterpret_cast<i2c_buf_t *>(
+            const_cast<unsigned char *>(&(binary[i]))),
     };
     msgs.push_back(bitstream_msg);
   }
@@ -190,6 +190,29 @@ void CrosslinkSendBitstreamOrLose(const int fd, const int i2c_address,
   }
 }
 
+#ifndef WIRING_PI
+std::string SysGPIOPath(int gpio_number, const std::string &what) {
+  std::ostringstream path_out;
+  path_out << "/sys/class/gpio/gpio" << gpio_number << "/" << what;
+  return path_out.str();
+}
+#endif
+
+void SetupGPIO(int cresetb_gpio_num) {
+// Setup CRESETB GPIO.
+#ifdef WIRING_PI
+  if (wiringPiSetup() == -1) {
+    Fail(EX_IOERR, "Failed to initialize wiringPi");
+  }
+  pinMode(cresetb_gpio_num, OUTPUT);
+#else
+  if (!FileExists(SysGPIOPath(cresetb_gpio_num, "value"))) {
+    WriteFileOrLose("/sys/class/gpio/export", std::to_string(cresetb_gpio_num));
+    WriteFileOrLose(SysGPIOPath(cresetb_gpio_num, "direction"), "out");
+  }
+#endif
+}
+
 void SetCRESETBOutput(const int gpio_number, int value) {
 #ifdef NOISY
   std::cout << "CRESETB <- " << value << std::endl;
@@ -197,18 +220,7 @@ void SetCRESETBOutput(const int gpio_number, int value) {
 #ifdef WIRING_PI
   digitalWrite(gpio_number, value);
 #else
-  {
-    std::ostringstream path_out;
-    path_out << "/sys/class/gpio/gpio" << gpio_number << "/value";
-    const auto path = path_out.str();
-    int fd = open(path.c_str(), O_RDWR);
-    if (fd < 0) {
-      Fail(EX_NOINPUT, "failed to open " + path);
-    }
-    char ascii_value = (value ? '1' : '0');
-    WriteOrLose(fd, &ascii_value, 1);
-    (void)close(fd);
-  }
+  WriteFileOrLose(SysGPIOPath(gpio_number, "value"), std::to_string(value));
 #endif
 }
 
@@ -331,13 +343,7 @@ int main(int argc, char **argv) {
 
   const auto &binary = ReadFileOrLose(binary_path);
 
-#ifdef WIRING_PI
-  // Setup our CRESETB GPIO.
-  if (wiringPiSetup() == -1) {
-    Fail(EX_IOERR, "Failed to initialize wiringPi");
-  }
-  pinMode(cresetb_gpio_num, OUTPUT);
-#endif
+  SetupGPIO(cresetb_gpio_num);
 
   int i2c_fd = open(i2c_path.c_str(), O_RDWR);
   if (i2c_fd < 0) {

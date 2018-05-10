@@ -41,7 +41,7 @@ void WriteOrLose(int fd, const void *buf, ssize_t count) {
 std::vector<std::uint8_t> ReadFileOrLose(const std::string &path) {
   const int fd = open(path.c_str(), O_RDONLY);
   if (fd < 0) {
-    Fail(EX_NOINPUT, "failed to open " + path);
+    Fail(EX_NOINPUT, "failed to open " + path + " for reading");
   }
   struct stat stat;
   const int rc = fstat(fd, &stat);
@@ -57,4 +57,20 @@ std::vector<std::uint8_t> ReadFileOrLose(const std::string &path) {
   }
 
   return bytes;
+}
+
+void WriteFileOrLose(const std::string &path, const std::string &contents) {
+  const int fd = open(path.c_str(), O_WRONLY);
+  if (fd < 0) {
+    Fail(EX_NOINPUT, "failed to open " + path + " for writing");
+  }
+  WriteOrLose(fd, contents.c_str(), contents.size());
+  if (close(fd) < 0) {
+    Fail(EX_IOERR, "failed to close " + path);
+  }
+}
+
+bool FileExists(const std::string &path) {
+  const int rc = access(path.c_str(), F_OK);
+  return rc == 0;
 }
