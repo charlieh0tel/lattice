@@ -74,16 +74,12 @@ std::string DumpBuffer(const void *buf, const int count, const int max_count) {
   return out.str();
 }
 
-void WriteI2COrLose(const int fd, const void *buf, const ssize_t count) {
-#ifdef NOISY
-  std::cout << "W: " << DumpBuffer(buf, count, 32) << std::endl;
-#endif
-  WriteOrLose(fd, buf, count);
-}
-
 template <typename T>
 void CrosslinkComamndOrLose(const int fd, const T &command) {
-  WriteI2COrLose(fd, command, sizeof(command));
+#ifdef NOISY
+  std::cout << "W: " << DumpBuffer(command, sizeof(command), 32) << std::endl;
+#endif
+  WriteOrLose(fd, command, sizeof(command));
 }
 
 template <typename T>
