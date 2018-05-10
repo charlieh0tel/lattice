@@ -6,8 +6,10 @@
 #include <sysexits.h>
 #include <unistd.h>
 
-#include <boost/format.hpp>
+#include <cerrno>
+#include <cstring>
 #include <iostream>
+#include <sstream>
 
 extern std::string argv0;
 
@@ -19,37 +21,39 @@ void Fail(int exit_code, const std::string &message) {
 void ReadOrLose(int fd, void *buf, ssize_t count) {
   ssize_t rc = read(fd, buf, count);
   if (rc != count) {
-    Fail(EX_IOERR,
-         (boost::format("failed to read bytes, rc=%1%, errno=%2%") % rc % errno)
-             .str());
+    std::ostringstream out;
+    out << "failed to read bytes, rc=" << rc << ", errno=" << errno << "("
+        << std::strerror(errno) << ")";
+    Fail(EX_IOERR, out.str());
   }
 }
 
 void WriteOrLose(int fd, const void *buf, ssize_t count) {
   ssize_t rc = write(fd, buf, count);
   if (rc != count) {
-    Fail(EX_IOERR, (boost::format("failed to write bytes, rc=%1%, errno=%2%") %
-                    rc % errno)
-                       .str());
+    std::ostringstream out;
+    out << "failed to write bytes, rc=" << rc << ", errno=" << errno << "("
+        << std::strerror(errno) << ")";
+    Fail(EX_IOERR, out.str());
   }
 }
 
 std::vector<std::uint8_t> ReadFileOrLose(const std::string &path) {
   const int fd = open(path.c_str(), O_RDONLY);
   if (fd < 0) {
-    Fail(EX_NOINPUT, (boost::format("failed to open %1%") % path).str());
+    Fail(EX_NOINPUT, "failed to open " + path);
   }
   struct stat stat;
   const int rc = fstat(fd, &stat);
   if (rc < 0) {
-    Fail(EX_IOERR, (boost::format("failed to stat %1%") % path).str());
+    Fail(EX_IOERR, "failed to stat " + path);
   }
 
   std::vector<std::uint8_t> bytes(stat.st_size);
   ReadOrLose(fd, &bytes[0], bytes.size());
 
   if (close(fd) < 0) {
-    Fail(EX_IOERR, (boost::format("failed to close %1%") % path).str());
+    Fail(EX_IOERR, "failed to close " + path);
   }
 
   return bytes;

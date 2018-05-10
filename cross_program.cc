@@ -1,12 +1,18 @@
 #include <fcntl.h>
 #include <linux/i2c-dev.h>
+#include <linux/i2c.h>
+#include <sys/ioctl.h>
 #include <sysexits.h>
+#include <unistd.h>
 #ifdef WIRING_PI
 #include <wiringPi.h>
 #endif
-#include <boost/format.hpp>
+#include <cerrno>
 #include <chrono>
 #include <cinttypes>
+#include <cstdlib>
+#include <cstring>
+#include <iomanip>
 #include <iostream>
 #include <sstream>
 #include <string>
@@ -49,10 +55,8 @@ constexpr uint32_t kREAD_STATUSFailFlag = (1 << 13);
 std::string argv0;
 
 void Usage() {
-  std::cerr << (boost::format(
-                    "usage: %1% i2c-device i2c-address gpio_number binary") %
-                argv0)
-            << std::endl;
+  std::cerr << "usage: " << argv0
+            << " i2c-device i2c-address gpio_number binary" << std::endl;
   std::exit(EX_USAGE);
 }
 
@@ -65,7 +69,7 @@ std::string DumpBuffer(const void *buf, const int count, const int max_count) {
     if (i != 0) {
       out << " ";
     }
-    out << boost::format("%02X") % static_cast<int>(u8_buf[i]);
+    out << std::hex << std::setw(2) << static_cast<int>(u8_buf[i]);
   }
   if (count > brief_count) {
     out << " ... ";
@@ -91,13 +95,13 @@ uint32_t CrosslinkReadOrLose(const int fd, const int i2c_address,
           .addr = static_cast<__u16>(i2c_address),
           .flags = 0,
           .len = sizeof(command),
-          .buf = reinterpret_cast<char *>(const_cast<unsigned char *>(command)),
+          .buf = reinterpret_cast<__u8 *>(const_cast<unsigned char *>(command)),
       },
       {
           .addr = static_cast<__u16>(i2c_address),
           .flags = I2C_M_RD,
           .len = sizeof(reply),
-          .buf = reinterpret_cast<char *>(reply),
+          .buf = reinterpret_cast<__u8 *>(reply),
       },
   };
   struct i2c_rdwr_ioctl_data ioctl_data = {.msgs = msgs, .nmsgs = 2};
@@ -106,15 +110,15 @@ uint32_t CrosslinkReadOrLose(const int fd, const int i2c_address,
 #endif
   int rc = ioctl(fd, I2C_RDWR, &ioctl_data);
   if (rc < 0) {
-    Fail(EX_IOERR,
-         (boost::format(
-              "failed with error on ioctl I2C_RDWR, rc=%1%, errno=%2%") %
-          rc % errno)
-             .str());
+    std::ostringstream out;
+    out << "failed with error on ioctl I2C_RDWR, rc=" << rc
+        << ", errno=" << errno << "(" << std::strerror(errno) << ")";
+    Fail(EX_IOERR, out.str());
   }
   if (rc != static_cast<int>(ioctl_data.nmsgs)) {
-    Fail(EX_IOERR,
-         (boost::format("failed to transfer all messages, rc=%1%") % rc).str());
+    std::ostringstream out;
+    out << "failed with transfer all messages on I2C_RDWR, rc=" << rc;
+    Fail(EX_IOERR, out.str());
   }
 #ifdef NOISY
   std::cout << "R: " << DumpBuffer(msgs[1].buf, msgs[1].len, 32) << std::endl;
@@ -130,7 +134,7 @@ void CrosslinkSendBitstreamOrLose(const int fd, const int i2c_address,
       .addr = static_cast<__u16>(i2c_address),
       .flags = 0,
       .len = sizeof(kOpcodeLSC_BITSTREAM_BURST),
-      .buf = reinterpret_cast<char *>(
+      .buf = reinterpret_cast<__u8 *>(
           const_cast<unsigned char *>(kOpcodeLSC_BITSTREAM_BURST)),
   };
   msgs.push_back(command_msg);
@@ -141,9 +145,9 @@ void CrosslinkSendBitstreamOrLose(const int fd, const int i2c_address,
     struct i2c_msg bitstream_msg = {
         .addr = static_cast<__u16>(i2c_address),
         .flags = I2C_M_NOSTART,
-        .len = static_cast<short>(n_write),
+        .len = static_cast<__u16>(n_write),
         .buf =
-            reinterpret_cast<char *>(const_cast<unsigned char *>(&(binary[i]))),
+            reinterpret_cast<__u8 *>(const_cast<unsigned char *>(&(binary[i]))),
     };
     msgs.push_back(bitstream_msg);
   }
@@ -152,26 +156,26 @@ void CrosslinkSendBitstreamOrLose(const int fd, const int i2c_address,
 
 #ifdef NOISY
   for (size_t i = 0; i < msgs.size(); ++i) {
-    std::cout
-        << (boost::format(
-                "#%02d, addr=0x%02X, flags=0x%04X, len=0x%04X, buf=0x%016X") %
-            i % msgs[i].addr % msgs[i].flags % msgs[i].len %
-            reinterpret_cast<ptrdiff_t>(&(msgs[i].buf[0])))
-        << " " << DumpBuffer(msgs[i].buf, msgs[i].len, 16) << std::endl;
+    std::cout << "#" << std::setw(2) << i << ", adddr=0x" << std::hex
+              << std::setw(2) << msgs[i].addr << ", flags=0x" << std::hex
+              << std::setw(4) << msgs[i].flags << ", len=0x" << std::hex
+              << std::setw(4) << msgs[i].len << ", buf=0x" << std::hex
+              << std::setw(16) << reinterpret_cast<ptrdiff_t>(&(msgs[i].buf[0]))
+              << " " << DumpBuffer(msgs[i].buf, msgs[i].len, 16) << std::endl;
   }
 #endif
 
   int rc = ioctl(fd, I2C_RDWR, &ioctl_data);
   if (rc < 0) {
-    Fail(EX_IOERR,
-         (boost::format(
-              "failed with error on ioctl I2C_RDWR, rc=%1%, errno=%2%") %
-          rc % errno)
-             .str());
+    std::ostringstream out;
+    out << "failed with error on ioctl I2C_RDWR, rc=" << rc
+        << ", errno=" << errno << "(" << std::strerror(errno) << ")";
+    Fail(EX_IOERR, out.str());
   }
   if (rc != static_cast<int>(ioctl_data.nmsgs)) {
-    Fail(EX_IOERR,
-         (boost::format("failed to transfer all messages, rc=%1%") % rc).str());
+    std::ostringstream out;
+    out << "failed with transfer all messages on I2C_RDWR, rc=" << rc;
+    Fail(EX_IOERR, out.str());
   }
 }
 
@@ -183,11 +187,12 @@ void SetCRESETBOutput(const int gpio_number, int value) {
   digitalWrite(gpio_number, value);
 #else
   {
-    auto path =
-        (boost::format("/sys/class/gpio/gpio%d/value") % gpio_number).str();
+    std::ostringstream path_out;
+    path_out << "/sys/class/gpio/gpio" << gpio_number << "/value";
+    const auto path = path_out.str();
     int fd = open(path.c_str(), O_RDWR);
     if (fd < 0) {
-      Fail(EX_NOINPUT, (boost::format("failed to open %1%") % path).str());
+      Fail(EX_NOINPUT, "failed to open " + path);
     }
     char ascii_value = (value ? '1' : '0');
     WriteOrLose(fd, &ascii_value, 1);
@@ -213,7 +218,8 @@ void CrosslinkProgram(const int cresetb_gpio_num, int i2c_fd, int i2c_address,
   {
     const uint32_t id_code =
         CrosslinkReadOrLose(i2c_fd, i2c_address, kOpcodeIDCODE);
-    std::cout << (boost::format("IDCODE = 0x%08X") % id_code) << std::endl;
+    std::cout << "IDCODE = 0x" << std::hex << std::setw(8) << id_code
+              << std::endl;
   }
 
   // 3. Enable SRAM Programming Mode
@@ -240,16 +246,14 @@ void CrosslinkProgram(const int cresetb_gpio_num, int i2c_fd, int i2c_address,
         CrosslinkReadOrLose(i2c_fd, i2c_address, kOpcodeREAD_STATUS);
     const bool busy = status & kREAD_STATUSBusyFlag;
     const bool fail = status & kREAD_STATUSFailFlag;
-    std::cout << (boost::format("status = 0x%08X") % status)
+    std::cout << "0x" << std::hex << std::setw(8) << status
               << " => {busy = " << (busy ? "yes" : "no")
               << ", fail = " << (fail ? "yes" : "no") << "}" << std::endl;
     if (fail) {
-      Fail(EX_IOERR,
-           (boost::format("device fail, status=0x%08x") % status).str());
+      Fail(EX_IOERR, "device signaled failure");
     }
     if (busy) {
-      Fail(EX_IOERR,
-           (boost::format("device busy, status=0x%08x") % status).str());
+      Fail(EX_IOERR, "device busy");
     }
   }
 
@@ -265,7 +269,7 @@ void CrosslinkProgram(const int cresetb_gpio_num, int i2c_fd, int i2c_address,
   {
     const uint32_t user_code =
         CrosslinkReadOrLose(i2c_fd, i2c_address, kOpcodeREAD_USER_CODE);
-    std::cout << (boost::format("user_code = 0x%08X") % user_code) << std::endl;
+    std::cout << std::hex << std::setw(8) << user_code << std::endl;
   }
 
   // 8. Read Status Register.
@@ -276,21 +280,18 @@ void CrosslinkProgram(const int cresetb_gpio_num, int i2c_fd, int i2c_address,
     const bool busy = status & kREAD_STATUSBusyFlag;
     const bool fail = status & kREAD_STATUSFailFlag;
     const bool done = status & kREAD_STATUSDoneFlag;
-    std::cout << (boost::format("status = 0x%08X") % status)
+    std::cout << std::hex << std::setw(8) << status
               << " => {busy = " << (busy ? "yes" : "no")
               << ", fail = " << (fail ? "yes" : "no")
               << ", done = " << (done ? "yes" : "no") << "}" << std::endl;
-    if (busy) {
-      Fail(EX_IOERR,
-           (boost::format("device busy, status=0x%08x") % status).str());
-    }
     if (fail) {
-      Fail(EX_IOERR,
-           (boost::format("device fail, status=0x%08x") % status).str());
+      Fail(EX_IOERR, "device signaled failure");
+    }
+    if (busy) {
+      Fail(EX_IOERR, "device is busy");
     }
     if (!done) {
-      Fail(EX_IOERR,
-           (boost::format("device not done, status=0x%08x") % status).str());
+      Fail(EX_IOERR, "device is not done (programming failed)");
     }
   }
 
@@ -312,8 +313,9 @@ int main(int argc, char **argv) {
   const std::string binary_path(argv[4]);
 
   if (i2c_address <= 0 || i2c_address > 0x7f) {
-    Fail(EX_DATAERR,
-         (boost::format("bad i2c address: %1%") % i2c_address).str());
+    std::ostringstream out;
+    out << "bad i2c address: " << i2c_address;
+    Fail(EX_DATAERR, out.str());
   }
 
   const auto &binary = ReadFileOrLose(binary_path);
@@ -328,8 +330,7 @@ int main(int argc, char **argv) {
 
   int i2c_fd = open(i2c_path.c_str(), O_RDWR);
   if (i2c_fd < 0) {
-    Fail(EX_NOINPUT,
-         (boost::format("failed to open i2c device %1%") % i2c_path).str());
+    Fail(EX_NOINPUT, "failed top open i2c_device " + i2c_path);
   }
 
   if (ioctl(i2c_fd, I2C_SLAVE, i2c_address) < 0) {
