@@ -1,303 +1,289 @@
-#include <cstddef>
-#include <cstdlib>
-#include <cinttypes>
-#include <iostream>
-#include <string>
-#include <vector>
-#include <boost/format.hpp>
-#include <sysexits.h>
-#include <sys/types.h>
-#include <sys/stat.h>
 #include <fcntl.h>
 #include <linux/i2c-dev.h>
+#include <sysexits.h>
 #include <wiringPi.h>
+#include <boost/format.hpp>
+#include <cinttypes>
+#include <iostream>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <thread>
+#include <chrono>
+#include "io.h"
 
-constexpr uint32_t kCResetBHighDelayMicroseconds = 10 * 1000;
-constexpr uint32_t kEnableSRAMProgramDelayMicroseconds = 1 * 1000;
-constexpr uint32_t kEraseSRAMDelayMicroseconds = 1000 * 1000;
-constexpr uint32_t kProgramSRAMDelayMicroseconds = 10 * 1000;
+// This limit is baked into the kernel, but (sigh) not exposed in any
+// header.
+const int kLinuxMaxI2CMessageSize = 8192;
 
-constexpr uint8_t kCrosslinkActivationKey[] = { 0xa4, 0xc6, 0xf4, 0x8a };
-constexpr uint8_t kOpcodeIDCODE[] = { 0xe0, 0x00, 0x00, 0x00 };
-constexpr uint8_t kOpcodeENABLE_SRAM_PROGRAM[] = { 0xc6, 0x00, 0x00, 0x00 };
-constexpr uint8_t kOpcodeERASE_SRAM[] = { 0x0e, 0x00, 0x00, 0x00 };
-constexpr uint8_t kOpcodeREAD_STATUS[] = { 0x3c, 0x00, 0x00, 0x00 };
-constexpr uint8_t kOpcodeLSC_INIT_ADDRESS[] = { 0x46, 0x00, 0x00, 0x00 };
-constexpr uint8_t kOpcodeLSC_BITSTREAM_BURST[] = { 0x7a, 0x00, 0x00, 0x00 };
-constexpr uint8_t kOpcodeLSC_READ_USER_CODE[] = { 0xc0, 0x00, 0x00, 0x00 };
-constexpr uint8_t kOpcodeDISABLE[] = { 0x26, 0x00, 0x00, 0x00 };
+// Lattic activation key to enable programming mode.
+constexpr uint8_t kCrosslinkActivationKey[] = {0xa4, 0xc6, 0xf4, 0x8a};
 
-constexpr uint32_t kStatusDoneFlag = (1<<8);
-constexpr uint32_t kStatusBusyFlag = (1<<12);
-constexpr uint32_t kStatusFailFlag = (1<<13);
+// Lattice Opcodes.
+constexpr uint8_t kOpcodeIDCODE[] = {0xe0, 0x00, 0x00, 0x00};
+constexpr uint8_t kOpcodeENABLE[] = {0xc6, 0x00, 0x00, 0x00};
+constexpr uint8_t kOpcodeERASE[] = {0x0e, 0x00, 0x00, 0x00};
+constexpr uint8_t kOpcodeREAD_STATUS[] = {0x3c, 0x00, 0x00, 0x00};
+constexpr uint8_t kOpcodeLSC_INIT_ADDRESS[] = {0x46, 0x00, 0x00, 0x00};
+constexpr uint8_t kOpcodeLSC_BITSTREAM_BURST[] = {0x7a, 0x00, 0x00, 0x00};
+constexpr uint8_t kOpcodeREAD_USER_CODE[] = {0xc0, 0x00, 0x00, 0x00};
+constexpr uint8_t kOpcodeDISABLE[] = {0x26, 0x00, 0x00, 0x00};
 
-#define NELEMENTS(A) (sizeof(A)/sizeof(A[0]))
+// Delays between operations.
+constexpr auto kCResetBLowDelay = std::chrono::milliseconds(1000); // Lattice now says 0 (was 1000 ms in previous doc).
+constexpr auto kCResetBHighDelay = std::chrono::milliseconds(10);
+constexpr auto kEnableDelay = std::chrono::milliseconds(1);
+constexpr auto kEraseDelay = std::chrono::milliseconds(100);  // Lattice says 0 (was 5000 ms in previous doc)
+
+// Flags in READ_STATUS value.
+constexpr uint32_t kREAD_STATUSDoneFlag = (1 << 8);
+constexpr uint32_t kREAD_STATUSBusyFlag = (1 << 12);
+constexpr uint32_t kREAD_STATUSFailFlag = (1 << 13);
+
+#define NELEMENTS(A) (sizeof(A) / sizeof(A[0]))
 
 std::string argv0;
 
 void Usage() {
-  std::cerr << (boost::format("usage: %1% i2c-device i2c-address gpio_number binary")
-		% argv0)
-	    << std::endl;
+  std::cerr << (boost::format(
+                    "usage: %1% i2c-device i2c-address gpio_number binary") %
+                argv0)
+            << std::endl;
   std::exit(EX_USAGE);
 }
 
-void Fail(int exit_code, const std::string &message) {
-  std::cerr << argv0 << ": " << message << std::endl;
-  std::exit(exit_code);
-}
-
-void ReadOrLose(int fd, void *buf, ssize_t count) {
-  ssize_t rc = read(fd, buf, count);
-  if (rc != count) {
-    Fail(EX_IOERR, (boost::format("failed to read bytes, rc=%1%, errno=%2%") 
-		    % rc % errno).str());
-  }
-}
-
-void WriteOrLose(int fd, const void *buf, ssize_t count) {
-  ssize_t rc = write(fd, buf, count);
-  if (rc != count) {
-    Fail(EX_IOERR, (boost::format("failed to write bytes, rc=%1%, errno=%2%")
-		    % rc % errno).str());
-  }
-}
-
-std::vector<std::uint8_t> ReadFileOrLose(const std::string &path) {
-  const int fd = open(path.c_str(), O_RDONLY);
-  if (fd < 0) {
-    Fail(EX_NOINPUT, (boost::format("failed to open %1%") % path).str());
-  }
-  struct stat stat;
-  const int rc = fstat(fd, &stat);
-  if (rc < 0) {
-    Fail(EX_IOERR, (boost::format("failed to stat %1%") % path).str());
-  }
-
-  std::vector<std::uint8_t> bytes(stat.st_size);
-  ReadOrLose(fd, &bytes[0], bytes.size());
-
-  if (close(fd) < 0) {
-    Fail(EX_IOERR, (boost::format("failed to close %1%") % path).str());
-  }
-
-  return bytes;
-}
-
-void WriteI2COrLose(int fd, const void *buf, ssize_t count) {
-#ifdef NOISY
-  std::cout << "W:";
-  constexpr int max_noise = 32;
-  int brief_count = std::min(count, max_noise);
+std::string DumpBuffer(const void *buf, const int count, const int max_count) {
+  std::ostringstream out;
+  const uint8_t *u8_buf = static_cast<const uint8_t *>(buf);
+  const int brief_count = std::min(count, max_count);
+  out << "[";
   for (int i = 0; i < brief_count; ++i) {
-    std::cout << boost::format(" %02X") % static_cast<int>(static_cast<const uint8_t *>(buf)[i]);
+    if (i != 0) {
+      out << " ";
+    }
+    out << boost::format("%02X") % static_cast<int>(u8_buf[i]);
   }
   if (count > brief_count) {
-    std::cout << " ...";
+    out << " ... ";
   }
-  std::cout << std::endl;
+  out << "]";
+  return out.str();
+}
+
+void WriteI2COrLose(const int fd, const void *buf, const ssize_t count) {
+#ifdef NOISY
+  std::cout << "W: " << DumpBuffer(buf, count, 32) << std::endl;
 #endif
   WriteOrLose(fd, buf, count);
 }
 
-void ReadI2COrLose(int fd, void *buf, ssize_t count) {
-  ReadOrLose(fd, buf, count);
-}
-
-uint32_t ReadI2CBigEndian32BitsOrLose(int fd) {
-  uint8_t bytes[4];
-  ReadI2COrLose(fd, &bytes, sizeof(bytes));
-  return ((bytes[0] << 24) |
-	  (bytes[1] << 16) |
-	  (bytes[2] << 8) |
-	  (bytes[3] << 0));
-}
-
 template <typename T>
-void CrossComamndOrLose(int fd, const T &command) {
+void CrosslinkComamndOrLose(const int fd, const T &command) {
   WriteI2COrLose(fd, command, sizeof(command));
 }
 
 template <typename T>
-uint32_t CrossReadOrLose(int fd, int addr, const T &command) {
+uint32_t CrosslinkReadOrLose(const int fd, const int i2c_address,
+                         const T &command) {
   uint8_t reply[4];
   struct i2c_msg msgs[] = {
-    {
-      .addr = static_cast<__u16>(addr),
-      .flags = 0,
-      .len = sizeof(command),
-      .buf = reinterpret_cast<char *>(const_cast<unsigned char *>(command)),
-    },
-    {
-      .addr = static_cast<__u16>(addr),
-      .flags = I2C_M_RD,
-      .len = sizeof(reply),
-      .buf = reinterpret_cast<char *>(reply),
-    },
+      {
+          .addr = static_cast<__u16>(i2c_address),
+          .flags = 0,
+          .len = sizeof(command),
+          .buf = reinterpret_cast<char *>(const_cast<unsigned char *>(command)),
+      },
+      {
+          .addr = static_cast<__u16>(i2c_address),
+          .flags = I2C_M_RD,
+          .len = sizeof(reply),
+          .buf = reinterpret_cast<char *>(reply),
+      },
   };
-  struct i2c_rdwr_ioctl_data ioctl_data = {
-    .msgs = msgs,
-    .nmsgs = 2
-  };
+  struct i2c_rdwr_ioctl_data ioctl_data = {.msgs = msgs, .nmsgs = 2};
+#ifdef NOISY
+  std::cout << "W: " << DumpBuffer(msgs[0].buf, msgs[0].len, 32) << std::endl;
+#endif
   int rc = ioctl(fd, I2C_RDWR, &ioctl_data);
   if (rc < 0) {
-    Fail(EX_IOERR, (boost::format("failed with error on ioctl I2C_RDWR, rc=%1%, errno=%2%")
-		    % rc % errno).str());
+    Fail(EX_IOERR,
+         (boost::format(
+              "failed with error on ioctl I2C_RDWR, rc=%1%, errno=%2%") %
+          rc % errno)
+             .str());
   }
   if (rc != static_cast<int>(ioctl_data.nmsgs)) {
-    Fail(EX_IOERR, (boost::format("failed to transfer all messages, rc=%1%") 
-		    % rc).str());
+    Fail(EX_IOERR,
+         (boost::format("failed to transfer all messages, rc=%1%") % rc).str());
   }
-  return ((reply[0] << 24) |
-	  (reply[1] << 16) |
-	  (reply[2] << 8) |
-	  (reply[3] << 0));
+#ifdef NOISY
+  std::cout << "R: " << DumpBuffer(msgs[1].buf, msgs[1].len, 32) << std::endl;
+#endif
+  return ((reply[0] << 24) | (reply[1] << 16) | (reply[2] << 8) |
+          (reply[3] << 0));
 }
 
-void CrossSendBitstreamOrLose(int fd, int addr, const std::vector<std::uint8_t> &binary) {
+void CrosslinkSendBitstreamOrLose(const int fd, const int i2c_address,
+                              const std::vector<std::uint8_t> &binary) {
   std::vector<i2c_msg> msgs;
   struct i2c_msg command_msg = {
-      .addr = static_cast<__u16>(addr),
+      .addr = static_cast<__u16>(i2c_address),
       .flags = 0,
       .len = sizeof(kOpcodeLSC_BITSTREAM_BURST),
-      .buf = reinterpret_cast<char *>(const_cast<unsigned char *>(kOpcodeLSC_BITSTREAM_BURST)),
+      .buf = reinterpret_cast<char *>(
+          const_cast<unsigned char *>(kOpcodeLSC_BITSTREAM_BURST)),
   };
   msgs.push_back(command_msg);
 
-  constexpr int chunk_size = 4096;
-  for (size_t i = 0; i < binary.size(); i+= chunk_size) {
+  for (size_t i = 0; i < binary.size(); i += kLinuxMaxI2CMessageSize) {
     int n_remaining = binary.size() - i;
-    int n_write = std::min(chunk_size, n_remaining);
+    int n_write = std::min(kLinuxMaxI2CMessageSize, n_remaining);
     struct i2c_msg bitstream_msg = {
-      .addr = static_cast<__u16>(addr),
-      .flags = I2C_M_NOSTART,
-      .len = static_cast<short>(n_write),
-      .buf = reinterpret_cast<char *>(const_cast<unsigned char *>(&(binary[i]))),
+        .addr = static_cast<__u16>(i2c_address),
+        .flags = I2C_M_NOSTART,
+        .len = static_cast<short>(n_write),
+        .buf =
+            reinterpret_cast<char *>(const_cast<unsigned char *>(&(binary[i]))),
     };
     msgs.push_back(bitstream_msg);
   }
-  struct i2c_rdwr_ioctl_data ioctl_data = {
-    .msgs = &(msgs[0]),
-    .nmsgs = msgs.size()
-  };
+  struct i2c_rdwr_ioctl_data ioctl_data = {.msgs = &(msgs[0]),
+                                           .nmsgs = msgs.size()};
 
 #ifdef NOISY
-  int total = 0;
   for (size_t i = 0; i < msgs.size(); ++i) {
-    std::cout << (boost::format("#%02d, addr=0x%02X, flags=0x%04X, len=0x%04X, buf=0x%016X")
-		  % i % msgs[i].addr % msgs[i].flags % msgs[i].len % reinterpret_cast<int>(&(msgs[i].buf[0])))
-	      << std::endl;
-    total += msgs[i].len;
+    std::cout
+        << (boost::format(
+                "#%02d, addr=0x%02X, flags=0x%04X, len=0x%04X, buf=0x%016X") %
+            i % msgs[i].addr % msgs[i].flags % msgs[i].len %
+            reinterpret_cast<int>(&(msgs[i].buf[0])))
+        << " " << DumpBuffer(msgs[i].buf, msgs[i].len, 16) << std::endl;
   }
-  std::cout << "binary size     = " << binary.size() << std::endl;
-  std::cout << "binary size + 4 = " << binary.size() + 4 << std::endl;
-  std::cout << "total mesg len  = " << total << std::endl;
 #endif
 
   int rc = ioctl(fd, I2C_RDWR, &ioctl_data);
   if (rc < 0) {
-    Fail(EX_IOERR, (boost::format("failed with error on ioctl I2C_RDWR, rc=%1%, errno=%2%")
-		    % rc % errno).str());
+    Fail(EX_IOERR,
+         (boost::format(
+              "failed with error on ioctl I2C_RDWR, rc=%1%, errno=%2%") %
+          rc % errno)
+             .str());
   }
   if (rc != static_cast<int>(ioctl_data.nmsgs)) {
-    Fail(EX_IOERR, (boost::format("failed to transfer all messages, rc=%1%") 
-		    % rc).str());
+    Fail(EX_IOERR,
+         (boost::format("failed to transfer all messages, rc=%1%") % rc).str());
   }
 }
 
+void SetCRESETBOutput(const int gpio_number, int value) {
+#ifdef NOISY
+  std::cout << "CRESETB <- " << value << std::endl;
+#endif
+  digitalWrite(gpio_number, value);
+}
 
-void CrossProgram(const int gpio_number, int i2c_fd, int i2c_address,
-		  const std::vector<std::uint8_t> &binary) {
+void CrosslinkProgram(const int cresetb_gpio_num, int i2c_fd, int i2c_address,
+                  const std::vector<std::uint8_t> &binary) {
   // 1. Initialize.
   {
     std::cout << "1. Initialize" << std::endl;
-    std::cout << "CRESETB <- 0" << std::endl;
-    digitalWrite(gpio_number, 0);
-    CrossComamndOrLose(i2c_fd, kCrosslinkActivationKey);
-    digitalWrite(gpio_number, 1);
-    std::cout << "CRESETB <- 1" << std::endl;
-    usleep(kCResetBHighDelayMicroseconds);
+    SetCRESETBOutput(cresetb_gpio_num, 0);
+    std::this_thread::sleep_for(kCResetBLowDelay);
+    CrosslinkComamndOrLose(i2c_fd, kCrosslinkActivationKey);
+    SetCRESETBOutput(cresetb_gpio_num, 1);
+    std::this_thread::sleep_for(kCResetBHighDelay);
   }
 
   // 2. Check IDCODE.
   {
     std::cout << "2. Check IDCODE." << std::endl;
-    const uint32_t id_code = CrossReadOrLose(i2c_fd, i2c_address, kOpcodeIDCODE);
-    std::cout << (boost::format("idcode = 0x%08X") % id_code) << std::endl;
+    const uint32_t id_code =
+        CrosslinkReadOrLose(i2c_fd, i2c_address, kOpcodeIDCODE);
+    std::cout << (boost::format("IDCODE = 0x%08X") % id_code) << std::endl;
   }
 
   // 3. Enable SRAM Programming Mode
   {
     std::cout << "3. Enable SRAM Programming Mode." << std::endl;
-    CrossComamndOrLose(i2c_fd, kOpcodeENABLE_SRAM_PROGRAM);
-    usleep(kEnableSRAMProgramDelayMicroseconds);
+    CrosslinkComamndOrLose(i2c_fd, kOpcodeENABLE);
+    std::this_thread::sleep_for(kEnableDelay);
   }
 
   // 4. Erase SRAM
   {
     std::cout << "4. Erase SRAM." << std::endl;
-    CrossComamndOrLose(i2c_fd, kOpcodeERASE_SRAM);
-    usleep(kEraseSRAMDelayMicroseconds);
+    CrosslinkComamndOrLose(i2c_fd, kOpcodeERASE);
+    // Lattice now says this delay is not required, but sometimes we
+    // see BUSY in the status register without it.  Could poll the
+    // status register for !BUSY ... or just delay.
+    std::this_thread::sleep_for(kEraseDelay);
   }
 
   // 5. Read Status Register
   {
     std::cout << "5. Read Status Register." << std::endl;
-    const uint32_t status = CrossReadOrLose(i2c_fd, i2c_address, kOpcodeREAD_STATUS);
-    std::cout << (boost::format("status = 0x%08X") % status) << std::endl;
-    const bool busy = status & kStatusBusyFlag;
-    const bool fail = status & kStatusFailFlag;
-    std::cout << "busy = " << (busy ? "yes" : "no") << std::endl;
-    std::cout << "fail = " << (fail ? "yes" : "no") << std::endl;
-    if (busy) {
-      Fail(EX_IOERR, (boost::format("device busy, status=0x%08x") % status).str());
-    }
+    const uint32_t status =
+        CrosslinkReadOrLose(i2c_fd, i2c_address, kOpcodeREAD_STATUS);
+    const bool busy = status & kREAD_STATUSBusyFlag;
+    const bool fail = status & kREAD_STATUSFailFlag;
+    std::cout << (boost::format("status = 0x%08X") % status)
+              << " => {busy = " << (busy ? "yes" : "no")
+              << ", fail = " << (fail ? "yes" : "no") << "}" << std::endl;
     if (fail) {
-      Fail(EX_IOERR, (boost::format("device fail, status=0x%08x") % status).str());
+      Fail(EX_IOERR,
+           (boost::format("device fail, status=0x%08x") % status).str());
+    }
+    if (busy) {
+      Fail(EX_IOERR,
+           (boost::format("device busy, status=0x%08x") % status).str());
     }
   }
 
   // 6. Program SRAM.
   {
     std::cout << "6. Program SRAM." << std::endl;
-    CrossComamndOrLose(i2c_fd, kOpcodeLSC_INIT_ADDRESS);
-    CrossSendBitstreamOrLose(i2c_fd, i2c_address, binary);
-    usleep(kProgramSRAMDelayMicroseconds);
+    CrosslinkComamndOrLose(i2c_fd, kOpcodeLSC_INIT_ADDRESS);
+    CrosslinkSendBitstreamOrLose(i2c_fd, i2c_address, binary);
   }
 
   // 7. Verify USERCODE.
   {
     std::cout << "7. Verify USERCODE." << std::endl;
-    const uint32_t user_code = CrossReadOrLose(i2c_fd, i2c_address, kOpcodeLSC_READ_USER_CODE);
+    const uint32_t user_code =
+        CrosslinkReadOrLose(i2c_fd, i2c_address, kOpcodeREAD_USER_CODE);
     std::cout << (boost::format("user_code = 0x%08X") % user_code) << std::endl;
   }
-  
+
   // 8. Read Status Register.
   {
     std::cout << "5. Read Status Register." << std::endl;
-    const uint32_t status = CrossReadOrLose(i2c_fd, i2c_address, kOpcodeREAD_STATUS);
-    std::cout << (boost::format("status = 0x%08X") % status) << std::endl;
-    const bool busy = status & kStatusBusyFlag;
-    const bool fail = status & kStatusFailFlag;
-    const bool done = status & kStatusDoneFlag;
-    std::cout << "busy = " << (busy ? "yes" : "no") << std::endl;
-    std::cout << "fail = " << (fail ? "yes" : "no") << std::endl; 
-    std::cout << "done = " << (done ? "yes" : "no") << std::endl;
+    const uint32_t status =
+        CrosslinkReadOrLose(i2c_fd, i2c_address, kOpcodeREAD_STATUS);
+    const bool busy = status & kREAD_STATUSBusyFlag;
+    const bool fail = status & kREAD_STATUSFailFlag;
+    const bool done = status & kREAD_STATUSDoneFlag;
+    std::cout << (boost::format("status = 0x%08X") % status)
+              << " => {busy = " << (busy ? "yes" : "no")
+              << ", fail = " << (fail ? "yes" : "no")
+              << ", done = " << (done ? "yes" : "no") << "}" << std::endl;
     if (busy) {
-      Fail(EX_IOERR, (boost::format("device busy, status=0x%08x") % status).str());
+      Fail(EX_IOERR,
+           (boost::format("device busy, status=0x%08x") % status).str());
     }
     if (fail) {
-      Fail(EX_IOERR, (boost::format("device fail, status=0x%08x") % status).str());
+      Fail(EX_IOERR,
+           (boost::format("device fail, status=0x%08x") % status).str());
     }
     if (!done) {
-      Fail(EX_IOERR, (boost::format("device not done, status=0x%08x") % status).str());
+      Fail(EX_IOERR,
+           (boost::format("device not done, status=0x%08x") % status).str());
     }
   }
 
   // 9. Exit Programming Mode.
   {
     std::cout << "9. Exit Programming Mode." << std::endl;
-    CrossComamndOrLose(i2c_fd, kOpcodeDISABLE);
+    CrosslinkComamndOrLose(i2c_fd, kOpcodeDISABLE);
   }
 }
 
@@ -310,7 +296,7 @@ int main(int argc, char **argv) {
 
   const std::string i2c_path(argv[1]);
   const int i2c_address = std::stoi(argv[2], 0, 0);
-  const int gpio_number = std::stoi(argv[3]);
+  const int cresetb_gpio_num = std::stoi(argv[3]);
   const std::string binary_path(argv[4]);
 
   if (i2c_address <= 0 || i2c_address > 0x7f) {
@@ -319,16 +305,12 @@ int main(int argc, char **argv) {
   }
 
   const auto &binary = ReadFileOrLose(binary_path);
-#ifdef NOISY
-  std::cout << "Binary is " << binary.size() << " bytes." << std::endl;
-#endif
 
+  // Setup our CRESETB GPIO.
   if (wiringPiSetup() == -1) {
     Fail(EX_IOERR, "Failed to initialize wiringPi");
   }
-
-  pinMode(gpio_number, OUTPUT);
-  digitalWrite(gpio_number, 1);
+  pinMode(cresetb_gpio_num, OUTPUT);
 
   int i2c_fd = open(i2c_path.c_str(), O_RDWR);
   if (i2c_fd < 0) {
@@ -344,14 +326,14 @@ int main(int argc, char **argv) {
     Fail(EX_IOERR, "failed to set I2C address");
   }
 
+  // A big timeout is required or the bitstream burst will timeout.
   if (ioctl(i2c_fd, I2C_TIMEOUT, 60 * 100 /* tens of ms */) < 0) {
     Fail(EX_IOERR, "failed to set I2C timeout");
   }
 
-  CrossProgram(gpio_number, i2c_fd, i2c_address, binary);
+  CrosslinkProgram(cresetb_gpio_num, i2c_fd, i2c_address, binary);
 
   if (close(i2c_fd) < 0) {
     Fail(EX_IOERR, "failed to close I2C device");
   }
-
-}  
+}
