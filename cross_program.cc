@@ -187,14 +187,15 @@ void SetCRESETBOutput(const int gpio_number, int value) {
   digitalWrite(gpio_number, value);
 #else
   {
-    auto path = (boost::format("/sys/class/gpio/gpio%d/value") %  gpio_number).str();
+    auto path =
+        (boost::format("/sys/class/gpio/gpio%d/value") % gpio_number).str();
     int fd = open(path.c_str(), O_RDWR);
     if (fd < 0) {
       Fail(EX_NOINPUT, (boost::format("failed to open %1%") % path).str());
     }
     char ascii_value = (value ? '1' : '0');
     WriteOrLose(fd, &ascii_value, 1);
-    (void) close(fd);
+    (void)close(fd);
   }
 #endif
 }
@@ -299,9 +300,7 @@ void CrosslinkProgram(const int cresetb_gpio_num, int i2c_fd, int i2c_address,
 
   // 9. Exit Programming Mode.
   std::cout << "9. Exit Programming Mode." << std::endl;
-  {
-    CrosslinkComamndOrLose(i2c_fd, kOpcodeDISABLE);
-  }
+  { CrosslinkComamndOrLose(i2c_fd, kOpcodeDISABLE); }
 }
 
 int main(int argc, char **argv) {
