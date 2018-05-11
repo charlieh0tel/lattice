@@ -79,7 +79,8 @@ std::string DumpBuffer(const void *buf, const int count, const int max_count) {
     if (i != 0) {
       out << " ";
     }
-    out << std::hex << std::setw(2) << static_cast<int>(u8_buf[i]);
+    out << std::hex << std::setfill('0') << std::setw(2)
+        << static_cast<int>(u8_buf[i]);
   }
   if (count > brief_count) {
     out << " ... ";
@@ -167,12 +168,14 @@ void CrosslinkSendBitstreamOrLose(const int fd, const int i2c_address,
 
 #ifdef NOISY
   for (size_t i = 0; i < msgs.size(); ++i) {
-    std::cout << "#" << std::setw(2) << i << ", adddr=0x" << std::hex
-              << std::setw(2) << msgs[i].addr << ", flags=0x" << std::hex
-              << std::setw(4) << msgs[i].flags << ", len=0x" << std::hex
-              << std::setw(4) << msgs[i].len << ", buf=0x" << std::hex
-              << std::setw(16) << reinterpret_cast<ptrdiff_t>(&(msgs[i].buf[0]))
-              << " " << DumpBuffer(msgs[i].buf, msgs[i].len, 16) << std::endl;
+    std::cout << "#" << std::setfill('0') << std::setw(2) << i << ", adddr=0x"
+              << std::hex << std::setfill('0') << std::setw(2) << msgs[i].addr
+              << ", flags=0x" << std::hex << std::setfill('0') << std::setw(4)
+              << msgs[i].flags << ", len=0x" << std::hex << std::setfill('0')
+              << (4) << msgs[i].len << ", buf=0x" << std::hex
+              << std::setfill('0') << std::setw(16)
+              << reinterpret_cast<ptrdiff_t>(&(msgs[i].buf[0])) << " "
+              << DumpBuffer(msgs[i].buf, msgs[i].len, 16) << std::endl;
   }
 #endif
 
@@ -241,8 +244,8 @@ void CrosslinkProgram(const int cresetb_gpio_num, int i2c_fd, int i2c_address,
   {
     const uint32_t id_code =
         CrosslinkReadOrLose(i2c_fd, i2c_address, kOpcodeIDCODE);
-    std::cout << "IDCODE = 0x" << std::hex << std::setw(8) << id_code
-              << std::endl;
+    std::cout << "IDCODE = 0x" << std::hex << std::setfill('0') << std::setw(8)
+              << id_code << std::endl;
   }
 
   // 3. Enable SRAM Programming Mode
@@ -269,7 +272,7 @@ void CrosslinkProgram(const int cresetb_gpio_num, int i2c_fd, int i2c_address,
         CrosslinkReadOrLose(i2c_fd, i2c_address, kOpcodeREAD_STATUS);
     const bool busy = status & kREAD_STATUSBusyFlag;
     const bool fail = status & kREAD_STATUSFailFlag;
-    std::cout << "0x" << std::hex << std::setw(8) << status
+    std::cout << "0x" << std::hex << std::setfill('0') << std::setw(8) << status
               << " => {busy = " << (busy ? "yes" : "no")
               << ", fail = " << (fail ? "yes" : "no") << "}" << std::endl;
     if (fail) {
@@ -292,7 +295,8 @@ void CrosslinkProgram(const int cresetb_gpio_num, int i2c_fd, int i2c_address,
   {
     const uint32_t user_code =
         CrosslinkReadOrLose(i2c_fd, i2c_address, kOpcodeREAD_USER_CODE);
-    std::cout << std::hex << std::setw(8) << user_code << std::endl;
+    std::cout << std::hex << std::setfill('0') << std::setw(8) << user_code
+              << std::endl;
   }
 
   // 8. Read Status Register.
@@ -303,7 +307,7 @@ void CrosslinkProgram(const int cresetb_gpio_num, int i2c_fd, int i2c_address,
     const bool busy = status & kREAD_STATUSBusyFlag;
     const bool fail = status & kREAD_STATUSFailFlag;
     const bool done = status & kREAD_STATUSDoneFlag;
-    std::cout << std::hex << std::setw(8) << status
+    std::cout << std::hex << std::setfill('0') << std::setw(8) << status
               << " => {busy = " << (busy ? "yes" : "no")
               << ", fail = " << (fail ? "yes" : "no")
               << ", done = " << (done ? "yes" : "no") << "}" << std::endl;
