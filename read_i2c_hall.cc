@@ -38,6 +38,7 @@ const int kLinuxMaxI2CMessageSize = 8192;
 constexpr uint8_t kCrosslinkActivationKey[] = {0xa4, 0xc6, 0xf4, 0x8a};
 
 // Lattice opcodes.
+constexpr uint8_t kDummyManu[] = {0xA5};
 constexpr uint8_t kOpcodeIDCODE[] = {0xe0, 0x00, 0x00, 0x00};
 constexpr uint8_t kOpcodeENABLE[] = {0xc6, 0x00, 0x00, 0x00};
 constexpr uint8_t kOpcodeERASE[] = {0x0e, 0x00, 0x00, 0x00};
@@ -65,8 +66,8 @@ constexpr uint32_t kREAD_STATUSFailFlag = (1 << 13);
 std::string argv0;
 
 void Usage() {
-  std::cerr << "Manuusage: " << argv0
-            << " i2c-device i2c-address gpio_number binary" << std::endl;
+  std::cerr << ">>>>>Usage: " << argv0
+            << " i2c-device i2c-address " << std::endl;
   std::exit(EX_USAGE);
 }
 
@@ -98,9 +99,9 @@ void CrosslinkComamndOrLose(const int fd, const T &command) {
 }
 
 template <typename T>
-uint32_t CrosslinkReadOrLose(const int fd, const int i2c_address,
+uint16_t ReadWordFromI2C(const int fd, const int i2c_address,
                              const T &command) {
-  uint8_t reply[4];
+  uint8_t reply[2];
   struct i2c_msg msgs[] = {
       {
           .addr = static_cast<__u16>(i2c_address),
@@ -135,8 +136,7 @@ uint32_t CrosslinkReadOrLose(const int fd, const int i2c_address,
 #ifdef NOISY
   std::cout << "R: " << DumpBuffer(msgs[1].buf, msgs[1].len, 32) << std::endl;
 #endif
-  return ((reply[0] << 24) | (reply[1] << 16) | (reply[2] << 8) |
-          (reply[3] << 0));
+  return ((reply[1] << 8) |(reply[0] << 0));
 }
 
 void CrosslinkSendBitstreamOrLose(const int fd, const int i2c_address,
@@ -227,117 +227,117 @@ void SetCRESETBOutput(const int gpio_number, int value) {
 #endif
 }
 
-void CrosslinkProgram(const int cresetb_gpio_num, int i2c_fd, int i2c_address,
-                      const std::vector<std::uint8_t> &binary) {
-  // 1. Initialize.
-  std::cout << "1. Initialize" << std::endl;
-  {
-    SetCRESETBOutput(cresetb_gpio_num, 0);
-    std::this_thread::sleep_for(kCRESETBLowDelay);
-    CrosslinkComamndOrLose(i2c_fd, kCrosslinkActivationKey);
-    SetCRESETBOutput(cresetb_gpio_num, 1);
-    std::this_thread::sleep_for(kCRESETBHighDelay);
-  }
+// void CrosslinkProgram(const int cresetb_gpio_num, int i2c_fd, int i2c_address,
+//                       const std::vector<std::uint8_t> &binary) {
+//   // 1. Initialize.
+//   std::cout << "1. Initialize" << std::endl;
+//   {
+//     SetCRESETBOutput(cresetb_gpio_num, 0);
+//     std::this_thread::sleep_for(kCRESETBLowDelay);
+//     CrosslinkComamndOrLose(i2c_fd, kCrosslinkActivationKey);
+//     SetCRESETBOutput(cresetb_gpio_num, 1);
+//     std::this_thread::sleep_for(kCRESETBHighDelay);
+//   }
 
-  // 2. Check IDCODE.
-  std::cout << "2. Check IDCODE." << std::endl;
-  {
-    const uint32_t id_code =
-        CrosslinkReadOrLose(i2c_fd, i2c_address, kOpcodeIDCODE);
-    std::cout << "IDCODE = 0x" << std::hex << std::setfill('0') << std::setw(8)
-              << id_code << std::endl;
-  }
+//   // 2. Check IDCODE.
+//   std::cout << "2. Check IDCODE." << std::endl;
+//   {
+//     const uint32_t id_code =
+//         CrosslinkReadOrLose(i2c_fd, i2c_address, kOpcodeIDCODE);
+//     std::cout << "IDCODE = 0x" << std::hex << std::setfill('0') << std::setw(8)
+//               << id_code << std::endl;
+//   }
 
-  // 3. Enable SRAM Programming Mode
-  std::cout << "3. Enable SRAM Programming Mode." << std::endl;
-  {
-    CrosslinkComamndOrLose(i2c_fd, kOpcodeENABLE);
-    std::this_thread::sleep_for(kEnableDelay);
-  }
+//   // 3. Enable SRAM Programming Mode
+//   std::cout << "3. Enable SRAM Programming Mode." << std::endl;
+//   {
+//     CrosslinkComamndOrLose(i2c_fd, kOpcodeENABLE);
+//     std::this_thread::sleep_for(kEnableDelay);
+//   }
 
-  // 4. Erase SRAM
-  std::cout << "4. Erase SRAM." << std::endl;
-  {
-    CrosslinkComamndOrLose(i2c_fd, kOpcodeERASE);
-    // Lattice now says this delay is not required, but sometimes we
-    // see BUSY in the status register without it.  Could poll the
-    // status register for !BUSY ... or just delay.
-    std::this_thread::sleep_for(kEraseDelay);
-  }
+//   // 4. Erase SRAM
+//   std::cout << "4. Erase SRAM." << std::endl;
+//   {
+//     CrosslinkComamndOrLose(i2c_fd, kOpcodeERASE);
+//     // Lattice now says this delay is not required, but sometimes we
+//     // see BUSY in the status register without it.  Could poll the
+//     // status register for !BUSY ... or just delay.
+//     std::this_thread::sleep_for(kEraseDelay);
+//   }
 
-  // 5. Read Status Register
-  std::cout << "5. Read Status Register." << std::endl;
-  {
-    const uint32_t status =
-        CrosslinkReadOrLose(i2c_fd, i2c_address, kOpcodeREAD_STATUS);
-    const bool busy = status & kREAD_STATUSBusyFlag;
-    const bool fail = status & kREAD_STATUSFailFlag;
-    std::cout << "0x" << std::hex << std::setfill('0') << std::setw(8) << status
-              << " => {busy = " << (busy ? "yes" : "no")
-              << ", fail = " << (fail ? "yes" : "no") << "}" << std::endl;
-    if (fail) {
-      Fail(EX_IOERR, "device signaled failure");
-    }
-    if (busy) {
-      Fail(EX_IOERR, "device busy");
-    }
-  }
+//   // 5. Read Status Register
+//   std::cout << "5. Read Status Register." << std::endl;
+//   {
+//     const uint32_t status =
+//         CrosslinkReadOrLose(i2c_fd, i2c_address, kOpcodeREAD_STATUS);
+//     const bool busy = status & kREAD_STATUSBusyFlag;
+//     const bool fail = status & kREAD_STATUSFailFlag;
+//     std::cout << "0x" << std::hex << std::setfill('0') << std::setw(8) << status
+//               << " => {busy = " << (busy ? "yes" : "no")
+//               << ", fail = " << (fail ? "yes" : "no") << "}" << std::endl;
+//     if (fail) {
+//       Fail(EX_IOERR, "device signaled failure");
+//     }
+//     if (busy) {
+//       Fail(EX_IOERR, "device busy");
+//     }
+//   }
 
-  // 6. Program SRAM.
-  std::cout << "6. Program SRAM." << std::endl;
-  {
-    CrosslinkComamndOrLose(i2c_fd, kOpcodeLSC_INIT_ADDRESS);
-    CrosslinkSendBitstreamOrLose(i2c_fd, i2c_address, binary);
-  }
+//   // 6. Program SRAM.
+//   std::cout << "6. Program SRAM." << std::endl;
+//   {
+//     CrosslinkComamndOrLose(i2c_fd, kOpcodeLSC_INIT_ADDRESS);
+//     CrosslinkSendBitstreamOrLose(i2c_fd, i2c_address, binary);
+//   }
 
-  // 7. Verify USERCODE.
-  std::cout << "7. Verify USERCODE." << std::endl;
-  {
-    const uint32_t user_code =
-        CrosslinkReadOrLose(i2c_fd, i2c_address, kOpcodeREAD_USER_CODE);
-    std::cout << std::hex << std::setfill('0') << std::setw(8) << user_code
-              << std::endl;
-  }
+//   // 7. Verify USERCODE.
+//   std::cout << "7. Verify USERCODE." << std::endl;
+//   {
+//     const uint32_t user_code =
+//         CrosslinkReadOrLose(i2c_fd, i2c_address, kOpcodeREAD_USER_CODE);
+//     std::cout << std::hex << std::setfill('0') << std::setw(8) << user_code
+//               << std::endl;
+//   }
 
-  // 8. Read Status Register.
-  std::cout << "5. Read Status Register." << std::endl;
-  {
-    const uint32_t status =
-        CrosslinkReadOrLose(i2c_fd, i2c_address, kOpcodeREAD_STATUS);
-    const bool busy = status & kREAD_STATUSBusyFlag;
-    const bool fail = status & kREAD_STATUSFailFlag;
-    const bool done = status & kREAD_STATUSDoneFlag;
-    std::cout << std::hex << std::setfill('0') << std::setw(8) << status
-              << " => {busy = " << (busy ? "yes" : "no")
-              << ", fail = " << (fail ? "yes" : "no")
-              << ", done = " << (done ? "yes" : "no") << "}" << std::endl;
-    if (fail) {
-      Fail(EX_IOERR, "device signaled failure");
-    }
-    if (busy) {
-      Fail(EX_IOERR, "device is busy");
-    }
-    if (!done) {
-      Fail(EX_IOERR, "device is not done (programming failed)");
-    }
-  }
+//   // 8. Read Status Register.
+//   std::cout << "5. Read Status Register." << std::endl;
+//   {
+//     const uint32_t status =
+//         CrosslinkReadOrLose(i2c_fd, i2c_address, kOpcodeREAD_STATUS);
+//     const bool busy = status & kREAD_STATUSBusyFlag;
+//     const bool fail = status & kREAD_STATUSFailFlag;
+//     const bool done = status & kREAD_STATUSDoneFlag;
+//     std::cout << std::hex << std::setfill('0') << std::setw(8) << status
+//               << " => {busy = " << (busy ? "yes" : "no")
+//               << ", fail = " << (fail ? "yes" : "no")
+//               << ", done = " << (done ? "yes" : "no") << "}" << std::endl;
+//     if (fail) {
+//       Fail(EX_IOERR, "device signaled failure");
+//     }
+//     if (busy) {
+//       Fail(EX_IOERR, "device is busy");
+//     }
+//     if (!done) {
+//       Fail(EX_IOERR, "device is not done (programming failed)");
+//     }
+//   }
 
-  // 9. Exit Programming Mode.
-  std::cout << "9. Exit Programming Mode." << std::endl;
-  { CrosslinkComamndOrLose(i2c_fd, kOpcodeDISABLE); }
-}
+//   // 9. Exit Programming Mode.
+//   std::cout << "9. Exit Programming Mode." << std::endl;
+//   { CrosslinkComamndOrLose(i2c_fd, kOpcodeDISABLE); }
+// }
 
 int main(int argc, char **argv) {
   argv0 = argv[0];
 
-  if (argc != 5) {
+  if (argc != 3) {
     Usage();
   }
 
   const std::string i2c_path(argv[1]);
   const int i2c_address = std::stoi(argv[2], 0, 0);
-  const int cresetb_gpio_num = std::stoi(argv[3]);
-  const std::string binary_path(argv[4]);
+  //const int cresetb_gpio_num = std::stoi(argv[3]);
+  //const std::string binary_path(argv[4]);
 
   if (i2c_address <= 0 || i2c_address > 0x7f) {
     std::ostringstream out;
@@ -345,9 +345,9 @@ int main(int argc, char **argv) {
     Fail(EX_DATAERR, out.str());
   }
 
-  const auto &binary = ReadFileOrLose(binary_path);
+  //const auto &binary = ReadFileOrLose(binary_path);
 
-  SetupGPIO(cresetb_gpio_num);
+  //SetupGPIO(cresetb_gpio_num);
 
   int i2c_fd = open(i2c_path.c_str(), O_RDWR);
   if (i2c_fd < 0) {
@@ -366,9 +366,20 @@ int main(int argc, char **argv) {
   if (ioctl(i2c_fd, I2C_TIMEOUT, 60 * 100 /* tens of ms */) < 0) {
     Fail(EX_IOERR, "failed to set I2C timeout");
   }
-
-  CrosslinkProgram(cresetb_gpio_num, i2c_fd, i2c_address, binary);
-
+  int ctr = 0;
+  // CrosslinkProgram(cresetb_gpio_num, i2c_fd, i2c_address, binary);
+  while(1) {
+    uint16_t val = ReadWordFromI2C(i2c_fd,0x13,kDummyManu);
+    if ( (val>>12) != ctr){
+        ctr = (val>>12);
+        float teslas = ((val&0xFFF)-450.0)*400.0/450.0;
+        std::cout << "ctr:" << ctr << ",\tHall reading is : " << (val&0xFFF) << "mV\t, "<<std::setprecision (2) << std::fixed << teslas<<"G"<<std::endl;
+    }
+    usleep(10000);
+  }
+  // uint16_t buf[2];
+  // ssize_t rc = read(i2c_fd, buf, 2);
+  
   if (close(i2c_fd) < 0) {
     Fail(EX_IOERR, "failed to close I2C device");
   }

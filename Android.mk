@@ -1,9 +1,9 @@
 LOCAL_PATH := $(call my-dir)
 include $(CLEAR_VARS)
-LOCAL_MODULE := cross_program
-LOCAL_CFLAGS := -DNOISY -DNEED_I2C_H
+LOCAL_MODULE := read_i2c_hall
+LOCAL_CFLAGS := -DNEED_I2C_H
 LOCAL_SRC_FILES := \
-	cross_program.cc io.cc
+	read_i2c_hall.cc io.cc
 LOCAL_LDLIBS :=
 LOCAL_STATIC_LIBRARIES :=
 LOCAL_SHARED_LIBRARIES :=
